@@ -1,0 +1,41 @@
+[package]
+name = "reference-library"
+version = "0.1.0"
+description = "A lightweight viewer for art reference images"
+authors = ["Kai Gulliksen"]
+edition = "2024"
+
+[lib]
+# The `_lib` suffix avoids a name clash between the lib and bin targets on Windows,
+# see https://github.com/rust-lang/cargo/issues/8519
+name = "reference_library_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Image decoding/encoding for thumbnails. Only the formats we actually need.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp", "bmp"] }
+# Used for JPEGs because it can decode straight to 1/2, 1/4 or 1/8 size,
+# which is much faster and uses far less memory than a full decode.
+jpeg-decoder = { version = "0.3", default-features = false }
+walkdir = "2"
+percent-encoding = "2"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+# Speed up image decoding in dev builds; the app code itself stays quick to compile.
+[profile.dev.package."*"]
+opt-level = 3
+
+# See https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true
