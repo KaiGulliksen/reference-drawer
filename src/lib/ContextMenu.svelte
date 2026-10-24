@@ -65,7 +65,8 @@
       <div class="separator" role="separator"></div>
     {:else}
       <button role="menuitem" class:danger={item.danger} disabled={item.disabled} onclick={() => run(item)}>
-        {item.label}
+        <span>{item.label}</span>
+        {#if item.hint}<span class="hint">{item.hint}</span>{/if}
       </button>
     {/if}
   {/each}
@@ -88,7 +89,9 @@
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   }
   button {
-    display: block;
+    display: flex;
+    justify-content: space-between;
+    gap: 24px;
     width: 100%;
     padding: 6px 12px;
     text-align: left;
@@ -109,6 +112,10 @@
   }
   .danger {
     color: #ff8f8f;
+  }
+  .hint {
+    color: var(--text-dim);
+    font-size: 12px;
   }
   .separator {
     height: 1px;

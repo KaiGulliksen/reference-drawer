@@ -17,6 +17,8 @@ interface Settings {
   tileSize: number;
   /** "cover" crops thumbnails to fill square tiles, "contain" shows the whole image. */
   tileFit: TileFit;
+  /** The key that opens the tag editor (a `KeyboardEvent.key` value, lower-cased). */
+  tagHotkey: string;
 }
 
 const STORAGE_KEY = "reference-library.settings";
@@ -30,7 +32,38 @@ const defaults: Settings = {
   sortAscending: true,
   tileSize: 180,
   tileFit: "cover",
+  tagHotkey: "t",
 };
+
+/** Keys the app already uses for something else, so they can't be the tag shortcut. */
+export const RESERVED_KEYS: Record<string, string> = {
+  arrowleft: "moving between images",
+  arrowright: "moving between images",
+  arrowup: "moving between images",
+  arrowdown: "moving between images",
+  pageup: "jumping through the grid",
+  pagedown: "jumping through the grid",
+  home: "going to the first image",
+  end: "going to the last image",
+  enter: "opening images",
+  escape: "closing things",
+  tab: "moving between controls",
+  " ": "scrolling",
+  a: "previous image in the viewer",
+  d: "next image in the viewer",
+  f: "fitting the image in the viewer",
+  "0": "fitting the image in the viewer",
+  "1": "actual size in the viewer",
+  "+": "zooming in",
+  "=": "zooming in",
+  "-": "zooming out",
+};
+
+/** How to show a key to people: "T", "F2", "Space". */
+export function keyLabel(key: string): string {
+  if (key === " ") return "Space";
+  return key.length === 1 ? key.toUpperCase() : key.charAt(0).toUpperCase() + key.slice(1);
+}
 
 function load(): Settings {
   try {

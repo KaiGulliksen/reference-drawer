@@ -13,12 +13,16 @@
     images: ImageEntry[];
     tileSize: number;
     tileFit: TileFit;
-    /** Index of the highlighted image, or -1. */
-    selected: number;
-    /** False while the viewer or a menu is open, so arrow keys go there instead. */
+    /** Paths of the selected images. The grid changes this set as you click and use the keyboard. */
+    selection: SvelteSet<string>;
+    /** Index of the image the keyboard is on (and that Enter opens), or -1. */
+    focus: number;
+    /** False while the viewer, a menu or a dialog is open, so keys go there instead. */
     active: boolean;
     /** Index of the image to start at the top of the view (to return to where you were). */
     initialTopIndex?: number;
+    /** The tag names to show under an image's name. */
+    tagsOf?: (path: string) => string[];
     onopen: (index: number) => void;
     /** Right-click on an image. */
     onitemmenu?: (index: number, x: number, y: number) => void;
@@ -28,12 +32,46 @@
     images,
     tileSize,
     tileFit,
-    selected = $bindable(),
+    selection,
+    focus = $bindable(),
     active,
     initialTopIndex = 0,
+    tagsOf,
     onopen,
     onitemmenu,
   }: Props = $props();
+
+  /** Where a Shift-click or Shift+arrow range starts from. */
+  let rangeStart = untrack(() => focus);
+
+  function selectOnly(i: number) {
+    selection.clear();
+    selection.add(images[i].path);
+    rangeStart = i;
+  }
+
+  function toggle(i: number) {
+    const path = images[i].path;
+    if (selection.has(path)) selection.delete(path);
+    else selection.add(path);
+    rangeStart = i;
+  }
+
+  /** Selects every image from the range start to `i`, keeping the rest of the selection if `add`. */
+  function selectRange(i: number, add: boolean) {
+    if (rangeStart < 0 || rangeStart >= images.length) rangeStart = i;
+    if (!add) selection.clear();
+    const [from, to] = rangeStart < i ? [rangeStart, i] : [i, rangeStart];
+    for (let k = from; k <= to; k++) selection.add(images[k].path);
+  }
+
+  function onTileClick(e: MouseEvent, i: number) {
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (e.shiftKey) selectRange(i, ctrl);
+    else if (ctrl) toggle(i);
+    else selectOnly(i);
+    focus = i;
+  }
 
   const GAP = 6;
   const PADDING = 12;
@@ -134,9 +172,9 @@
     untrack(() => broken.clear());
   });
 
-  // Scroll the selected tile into view (e.g. after keyboard navigation or closing the viewer).
+  // Scroll the focused tile into view (e.g. after keyboard navigation or closing the viewer).
   $effect(() => {
-    const index = selected;
+    const index = focus;
     untrack(() => {
       // Before the grid has a size (just after opening) the restored scroll position wins.
       if (index < 0 || index >= images.length || height === 0) return;
@@ -150,11 +188,24 @@
   });
 
   function onkeydown(e: KeyboardEvent) {
-    if (!active || images.length === 0 || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (!active || images.length === 0 || e.altKey || e.metaKey) return;
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
 
+    if (e.ctrlKey) {
+      if (e.key === "a" || e.key === "A") {
+        for (const image of images) selection.add(image.path);
+        e.preventDefault();
+      }
+      return;
+    }
+    if (e.key === "Escape" && selection.size > 0) {
+      selection.clear();
+      e.preventDefault();
+      return;
+    }
+
     const rowsPerPage = Math.max(1, Math.floor(height / rowHeight));
-    const current = selected < 0 ? -1 : selected;
+    const current = focus < 0 || focus >= images.length ? -1 : focus;
     let next: number;
     switch (e.key) {
       case "ArrowRight": next = current + 1; break;
@@ -173,7 +224,15 @@
         return;
     }
     e.preventDefault();
-    selected = Math.min(images.length - 1, Math.max(0, next));
+    next = Math.min(images.length - 1, Math.max(0, next));
+    // Shift extends the selection from where it started; plain arrows move a single selection.
+    if (e.shiftKey) {
+      if (current >= 0 && rangeStart < 0) rangeStart = current;
+      selectRange(next, false);
+    } else {
+      selectOnly(next);
+    }
+    focus = next;
   }
 </script>
 
@@ -183,20 +242,24 @@
   <div class="canvas" style:height="{totalHeight}px">
     {#each visible as i (images[i].path)}
       {@const image = images[i]}
+      {@const tileTags = tagsOf?.(image.path) ?? []}
       <button
         class="tile"
-        class:selected={i === selected}
+        class:selected={selection.has(image.path)}
+        class:focused={i === focus}
         class:contain={tileFit === "contain"}
         style:width="{cell}px"
         style:height="{cell}px"
         style:transform="translate({PADDING + (i % columns) * (cell + GAP)}px, {PADDING +
           Math.floor(i / columns) * rowHeight}px)"
-        title={image.name}
-        onclick={() => (selected = i)}
-        ondblclick={() => onopen(i)}
+        title={tileTags.length ? `${image.name}\nTags: ${tileTags.join(", ")}` : image.name}
+        onclick={(e) => onTileClick(e, i)}
+        ondblclick={(e) => !e.ctrlKey && !e.shiftKey && onopen(i)}
         oncontextmenu={(e) => {
           e.preventDefault();
-          selected = i;
+          // Right-clicking inside the selection keeps it, so a menu action can apply to all of it.
+          if (!selection.has(image.path)) selectOnly(i);
+          focus = i;
           onitemmenu?.(i, e.clientX, e.clientY);
         }}
       >
@@ -205,7 +268,18 @@
         {:else if loadable.has(image.path)}
           <img src={thumbUrl(image)} alt={image.name} decoding="async" draggable="false" onerror={() => broken.add(image.path)} />
         {/if}
-        <span class="label">{image.name}</span>
+        {#if selection.has(image.path)}
+          <span class="check" aria-hidden="true">
+            <svg viewBox="0 0 12 12" width="11" height="11"><path d="M2.5 6.2l2.3 2.3 4.7-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          </span>
+        {/if}
+        {#if tileTags.length}
+          <span class="tag-dot" aria-hidden="true"></span>
+        {/if}
+        <span class="label">
+          {image.name}
+          {#if tileTags.length}<span class="tags">{tileTags.join(" · ")}</span>{/if}
+        </span>
       </button>
     {/each}
   </div>
@@ -236,8 +310,45 @@
     outline-offset: 1px;
     contain: strict;
   }
+  .tile.focused {
+    outline: 2px dashed var(--text-dim);
+  }
   .tile.selected {
-    outline-color: var(--accent);
+    outline: 2px solid var(--accent);
+  }
+  /* A tint over selected tiles, so a selection of many images is easy to see. */
+  .tile.selected::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--accent);
+    opacity: 0.18;
+    pointer-events: none;
+  }
+  .check {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    color: #fff;
+    background: var(--accent);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+    pointer-events: none;
+  }
+  .tag-dot {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45);
+    pointer-events: none;
   }
   .tile img {
     width: 100%;
@@ -266,8 +377,16 @@
     pointer-events: none;
   }
   .tile:hover .label,
-  .tile.selected .label {
+  .tile.focused .label {
     opacity: 1;
+  }
+  .label .tags {
+    display: block;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 11px;
+    color: #c8d8ff;
   }
   .broken {
     display: grid;

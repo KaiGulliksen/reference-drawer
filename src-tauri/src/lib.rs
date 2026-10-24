@@ -3,7 +3,7 @@ mod pool;
 mod scan;
 mod thumbs;
 
-use library::{Library, Workspace};
+use library::{Library, Tag, TagData, Workspace};
 use pool::WorkerPool;
 use scan::ImageEntry;
 use serde::Serialize;
@@ -87,6 +87,46 @@ async fn set_workspace_folder(library: State<'_, Library>, id: i64, path: String
 #[tauri::command]
 async fn remove_workspace(library: State<'_, Library>, id: i64) -> Result<(), String> {
     library.remove_workspace(id)
+}
+
+#[tauri::command]
+async fn get_tags(library: State<'_, Library>, workspace_id: i64) -> Result<TagData, String> {
+    library.tag_data(workspace_id)
+}
+
+#[tauri::command]
+async fn add_tag(
+    library: State<'_, Library>,
+    workspace_id: i64,
+    paths: Vec<String>,
+    name: String,
+) -> Result<Tag, String> {
+    library.add_tag(workspace_id, &paths, &name)
+}
+
+#[tauri::command]
+async fn remove_tag(
+    library: State<'_, Library>,
+    workspace_id: i64,
+    paths: Vec<String>,
+    tag_id: i64,
+) -> Result<bool, String> {
+    library.remove_tag(workspace_id, &paths, tag_id)
+}
+
+#[tauri::command]
+async fn rename_tag(
+    library: State<'_, Library>,
+    workspace_id: i64,
+    tag_id: i64,
+    name: String,
+) -> Result<TagData, String> {
+    library.rename_tag(workspace_id, tag_id, &name)
+}
+
+#[tauri::command]
+async fn delete_tag(library: State<'_, Library>, workspace_id: i64, tag_id: i64) -> Result<(), String> {
+    library.delete_tag(workspace_id, tag_id)
 }
 
 /// The real width and height of an image (after EXIF rotation), without decoding it.
@@ -193,6 +233,11 @@ pub fn run() {
             set_workspace_recursive,
             set_workspace_folder,
             remove_workspace,
+            get_tags,
+            add_tag,
+            remove_tag,
+            rename_tag,
+            delete_tag,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

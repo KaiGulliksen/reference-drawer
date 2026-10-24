@@ -10,10 +10,14 @@
   interface Props {
     images: ImageEntry[];
     index: number;
+    /** False while something (like the tag editor) is open on top, so keys go there instead. */
+    active?: boolean;
+    /** The tag names to show for an image. */
+    tagsOf?: (path: string) => string[];
     onclose: () => void;
   }
 
-  let { images, index = $bindable(), onclose }: Props = $props();
+  let { images, index = $bindable(), active = true, tagsOf, onclose }: Props = $props();
 
   const MARGIN = 24;
   /** Height of the info bar at the bottom, kept clear when fitting the image. */
@@ -26,6 +30,7 @@
   const previewSize = previewSizeForScreen();
 
   const image = $derived(images[index]);
+  const imageTags = $derived(tagsOf?.(image.path) ?? []);
 
   let stage: HTMLDivElement;
   let stageWidth = $state(0);
@@ -190,7 +195,8 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
-    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    if (!active || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.target instanceof HTMLInputElement) return;
     switch (e.key) {
       case "Escape": onclose(); break;
       case "ArrowRight": case "d": case "D": go(1); break;
@@ -272,6 +278,9 @@
   <div class="bar">
     <div class="info">
       <span class="name" title={image.path}>{image.name}</span>
+      {#if imageTags.length}
+        <span class="tags" title="Tags">{imageTags.join(" · ")}</span>
+      {/if}
       {#if naturalWidth}<span>{naturalWidth} × {naturalHeight}</span>{/if}
       <span>{formatBytes(image.size)}</span>
       <span>{index + 1} / {images.length}</span>
@@ -394,6 +403,11 @@
     color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .info .tags {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #c8d8ff;
   }
   .controls {
     display: flex;

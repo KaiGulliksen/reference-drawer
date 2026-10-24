@@ -14,14 +14,28 @@ and [Svelte 5](https://svelte.dev) for the interface.
   - Each workspace remembers its own *Subfolders* setting, and where you were scrolled to.
 - **Click** a thumbnail to select it, **double-click** or press **Enter** to view it full size.
   Right-click an image for more options.
+- **Select several images** like in Explorer: Ctrl+click to add or remove one, Shift+click (or
+  Shift+arrow keys) for a range, **Ctrl+A** for all, **Esc** to clear.
 - In the grid: arrow keys move the selection, Page Up/Down and Home/End jump.
+- **Tags:** press **T** (or right-click → *Tags…*) to tag the selected images, or the image open in
+  the viewer. Type a tag and press Enter; existing tags are suggested as you type (Tab completes).
+  With several images selected, tags only some of them have are shown with a count; click one to
+  add it to all. Enter on an empty box or Esc closes the editor. The shortcut can be changed in
+  **Settings** (the gear button).
+  - The sidebar lists the tags used in the workspace. Click one to show only those images,
+    Ctrl+click to combine tags (images must have all of them), or pick *Untagged*.
+    The search box narrows the list; Enter shows the best match.
+  - Double-click a tag to rename it (renaming onto an existing name merges the two), or
+    right-click it to delete it. Tags belong to their workspace.
 - In the viewer:
   - scroll to zoom (towards the cursor) · drag to pan · double-click to toggle fit / actual size
   - ← / → (or A / D) previous / next · F or 0 fit · 1 actual size · + / − zoom · Esc close
 - **Subfolders** includes images in folders inside the workspace's folder.
 - **Fill / Whole** switches between cropped square thumbnails and whole images.
 
-Workspaces are stored in `%APPDATA%\com.kaigulliksen.reflibrary\library.db` (an SQLite database).
+Workspaces and tags are stored in `%APPDATA%\com.kaigulliksen.reflibrary\library.db` (an SQLite
+database). Tags are linked to an image by its path inside the workspace folder, so they survive
+moving the whole folder (use *Change folder…*), but not renaming or moving a single file outside the app.
 
 Supported formats: JPG, PNG, WebP, GIF, BMP, AVIF.
 
@@ -44,8 +58,11 @@ npm run tauri build  # make the optimised app + installer
 ```
 src/                      the interface (Svelte)
   routes/+page.svelte     main window: switching workspaces, toolbar, empty states, menus
-  lib/Sidebar.svelte      the workspace list (room for a tags section later)
+  lib/Sidebar.svelte      the workspace list and the tag list with search
+  lib/TagEditor.svelte    adding/removing tags on the selected images
+  lib/SettingsDialog.svelte  settings (the tag shortcut)
   lib/ContextMenu.svelte  right-click menus (items defined in lib/menu.ts)
+  lib/tags.svelte.ts      the open workspace's tags, kept in sync with the database
   lib/Grid.svelte         virtualized thumbnail grid (only on-screen tiles exist)
   lib/Viewer.svelte       full-size viewer with zoom/pan
   lib/api.ts              calls into the Rust side, builds image URLs
@@ -53,7 +70,7 @@ src/                      the interface (Svelte)
   lib/settings.svelte.ts  remembered preferences
 src-tauri/                the backend (Rust)
   src/lib.rs              app setup, commands, the thumb:// protocol
-  src/library.rs          the library database (workspaces; tags later)
+  src/library.rs          the library database (workspaces and tags), with its tests
   src/scan.rs             finds image files in a folder
   src/thumbs.rs           makes thumbnails and viewer previews, keeps the on-disk cache
   src/pool.rs             background workers (newest request first)
