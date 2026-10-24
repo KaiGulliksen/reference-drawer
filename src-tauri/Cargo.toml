@@ -1,6 +1,6 @@
 [package]
 name = "reference-library"
-version = "0.1.0"
+version = "0.2.0"
 description = "A lightweight viewer for art reference images"
 authors = ["Kai Gulliksen"]
 edition = "2024"
@@ -28,6 +28,8 @@ jpeg-decoder = { version = "0.3", default-features = false }
 walkdir = "2"
 percent-encoding = "2"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+# The library database (workspaces, and tags later). "bundled" builds SQLite into the app.
+rusqlite = { version = "0.41", features = ["bundled"] }
 
 # Speed up image decoding in dev builds; the app code itself stays quick to compile.
 [profile.dev.package."*"]

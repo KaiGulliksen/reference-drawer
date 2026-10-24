@@ -4,7 +4,7 @@
   images costs about as much as one with 200.
 -->
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { thumbUrl, type ImageEntry } from "./api";
   import type { TileFit } from "./settings.svelte";
@@ -15,12 +15,25 @@
     tileFit: TileFit;
     /** Index of the highlighted image, or -1. */
     selected: number;
-    /** False while the viewer is open, so arrow keys go to the viewer instead. */
+    /** False while the viewer or a menu is open, so arrow keys go there instead. */
     active: boolean;
+    /** Index of the image to start at the top of the view (to return to where you were). */
+    initialTopIndex?: number;
     onopen: (index: number) => void;
+    /** Right-click on an image. */
+    onitemmenu?: (index: number, x: number, y: number) => void;
   }
 
-  let { images, tileSize, tileFit, selected = $bindable(), active, onopen }: Props = $props();
+  let {
+    images,
+    tileSize,
+    tileFit,
+    selected = $bindable(),
+    active,
+    initialTopIndex = 0,
+    onopen,
+    onitemmenu,
+  }: Props = $props();
 
   const GAP = 6;
   const PADDING = 12;
@@ -64,11 +77,24 @@
   });
 
   /** First image index of the top visible row; used to keep your place when the layout changes. */
-  let anchor = 0;
+  let anchor = untrack(() => initialTopIndex);
+  /** The last scroll position set by the grid itself (rather than by you scrolling). */
+  let ownScrollTop = -1;
+
+  /** The image at the top of the view, so the page can bring you back here later. */
+  export function topIndex() {
+    return anchor;
+  }
 
   function onscroll() {
     scrollTop = scroller.scrollTop;
-    anchor = Math.floor(Math.max(0, scrollTop - PADDING) / rowHeight) * columns;
+    // The browser reports scrolls a moment later. If this is just the echo of the grid moving
+    // itself, the layout may have changed since, so don't recalculate where you are from it.
+    if (Math.abs(scrollTop - ownScrollTop) < 1) {
+      ownScrollTop = -1;
+    } else {
+      anchor = Math.floor(Math.max(0, scrollTop - PADDING) / rowHeight) * columns;
+    }
 
     const now = performance.now();
     const speed = Math.abs(scrollTop - lastScroll.top) / Math.max(1, now - lastScroll.time);
@@ -88,29 +114,32 @@
   });
 
   // When the tile size or window width changes, keep the same images at the top of the view.
+  // (This is also what scrolls to `initialTopIndex` once the grid knows its size.)
   $effect(() => {
+    if (width === 0) return; // not laid out yet, so the column count isn't known
     const top = Math.floor(anchor / columns) * rowHeight;
-    untrack(() => {
-      if (Math.abs(scroller.scrollTop - top) > 1) scroller.scrollTop = top;
+    // Wait until the page shows the new layout. Scrolling before the grid has grown to its
+    // new height would get cut short.
+    tick().then(() => {
+      if (Math.abs(scroller.scrollTop - top) > 1) {
+        scroller.scrollTop = top;
+        ownScrollTop = scroller.scrollTop; // may be less than `top` near the end
+      }
     });
   });
 
-  // A new folder starts at the top.
+  // Files may have been fixed or replaced when the list is refreshed, so let broken ones retry.
   $effect(() => {
     void images;
-    untrack(() => {
-      scroller.scrollTop = 0;
-      scrollTop = 0;
-      anchor = 0;
-      broken.clear();
-    });
+    untrack(() => broken.clear());
   });
 
   // Scroll the selected tile into view (e.g. after keyboard navigation or closing the viewer).
   $effect(() => {
     const index = selected;
     untrack(() => {
-      if (index < 0 || index >= images.length) return;
+      // Before the grid has a size (just after opening) the restored scroll position wins.
+      if (index < 0 || index >= images.length || height === 0) return;
       const top = PADDING + Math.floor(index / columns) * rowHeight;
       if (top < scroller.scrollTop) {
         scroller.scrollTop = top - PADDING;
@@ -165,6 +194,11 @@
         title={image.name}
         onclick={() => (selected = i)}
         ondblclick={() => onopen(i)}
+        oncontextmenu={(e) => {
+          e.preventDefault();
+          selected = i;
+          onitemmenu?.(i, e.clientX, e.clientY);
+        }}
       >
         {#if broken.has(image.path)}
           <span class="broken">Can't preview</span>

@@ -1,7 +1,9 @@
+mod library;
 mod pool;
 mod scan;
 mod thumbs;
 
+use library::{Library, Workspace};
 use pool::WorkerPool;
 use scan::ImageEntry;
 use serde::Serialize;
@@ -9,7 +11,10 @@ use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use tauri::http::{Request, Response, StatusCode, header};
-use tauri::{AppHandle, Manager, UriSchemeContext, UriSchemeResponder, Wry};
+use tauri::{AppHandle, Manager, State, UriSchemeContext, UriSchemeResponder, Wry};
+
+/// Set this to use a different folder for the library database, e.g. a throwaway one for testing.
+const DATA_DIR_ENV: &str = "REFERENCE_LIBRARY_DATA_DIR";
 
 /// Where generated thumbnails are stored (inside %LOCALAPPDATA% on Windows).
 struct ThumbCacheDir(PathBuf);
@@ -52,6 +57,36 @@ async fn scan_folder(app: AppHandle, path: String, recursive: bool) -> Result<Sc
         .map_err(|e| e.to_string())?;
 
     Ok(ScanResult { folder: folder.to_string_lossy().into_owned(), images })
+}
+
+#[tauri::command]
+async fn list_workspaces(library: State<'_, Library>) -> Result<Vec<Workspace>, String> {
+    library.workspaces()
+}
+
+#[tauri::command]
+async fn add_workspace(library: State<'_, Library>, path: String) -> Result<Workspace, String> {
+    library.add_workspace(&path)
+}
+
+#[tauri::command]
+async fn rename_workspace(library: State<'_, Library>, id: i64, name: String) -> Result<Workspace, String> {
+    library.rename_workspace(id, &name)
+}
+
+#[tauri::command]
+async fn set_workspace_recursive(library: State<'_, Library>, id: i64, recursive: bool) -> Result<Workspace, String> {
+    library.set_workspace_recursive(id, recursive)
+}
+
+#[tauri::command]
+async fn set_workspace_folder(library: State<'_, Library>, id: i64, path: String) -> Result<Workspace, String> {
+    library.set_workspace_folder(id, &path)
+}
+
+#[tauri::command]
+async fn remove_workspace(library: State<'_, Library>, id: i64) -> Result<(), String> {
+    library.remove_workspace(id)
 }
 
 /// The real width and height of an image (after EXIF rotation), without decoding it.
@@ -141,9 +176,24 @@ pub fn run() {
         .setup(|app| {
             let cache_dir = app.path().app_cache_dir()?.join("thumbs");
             app.manage(ThumbCacheDir(cache_dir));
+
+            let data_dir = match std::env::var_os(DATA_DIR_ENV) {
+                Some(dir) => PathBuf::from(dir),
+                None => app.path().app_data_dir()?,
+            };
+            app.manage(Library::open(&data_dir.join("library.db"))?);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![scan_folder, image_size])
+        .invoke_handler(tauri::generate_handler![
+            scan_folder,
+            image_size,
+            list_workspaces,
+            add_workspace,
+            rename_workspace,
+            set_workspace_recursive,
+            set_workspace_folder,
+            remove_workspace,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

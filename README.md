@@ -6,14 +6,22 @@ and [Svelte 5](https://svelte.dev) for the interface.
 
 ## Using it
 
-- **Open folder…** (or drag a folder onto the window) to show its images. The last folder reopens on launch.
+- **Workspaces** keep separate collections apart, e.g. *Art inspiration* and *Home interiors*.
+  Each one shows the images from its own folder. Add one with **+** in the sidebar (or drag a folder
+  onto the window), switch with a click or **Ctrl+1…9**, and hide the sidebar with **Ctrl+B**.
+  - Double-click a workspace to rename it; right-click (or **⋯**) to rename, change its folder,
+    show it in Explorer or remove it. Removing a workspace never touches the folder or its images.
+  - Each workspace remembers its own *Subfolders* setting, and where you were scrolled to.
 - **Click** a thumbnail to select it, **double-click** or press **Enter** to view it full size.
+  Right-click an image for more options.
 - In the grid: arrow keys move the selection, Page Up/Down and Home/End jump.
 - In the viewer:
   - scroll to zoom (towards the cursor) · drag to pan · double-click to toggle fit / actual size
   - ← / → (or A / D) previous / next · F or 0 fit · 1 actual size · + / − zoom · Esc close
-- **Subfolders** includes images in folders inside the chosen one.
+- **Subfolders** includes images in folders inside the workspace's folder.
 - **Fill / Whole** switches between cropped square thumbnails and whole images.
+
+Workspaces are stored in `%APPDATA%\com.kaigulliksen.reflibrary\library.db` (an SQLite database).
 
 Supported formats: JPG, PNG, WebP, GIF, BMP, AVIF.
 
@@ -35,13 +43,17 @@ npm run tauri build  # make the optimised app + installer
 
 ```
 src/                      the interface (Svelte)
-  routes/+page.svelte     main window: toolbar, empty states, drag-and-drop
+  routes/+page.svelte     main window: switching workspaces, toolbar, empty states, menus
+  lib/Sidebar.svelte      the workspace list (room for a tags section later)
+  lib/ContextMenu.svelte  right-click menus (items defined in lib/menu.ts)
   lib/Grid.svelte         virtualized thumbnail grid (only on-screen tiles exist)
   lib/Viewer.svelte       full-size viewer with zoom/pan
   lib/api.ts              calls into the Rust side, builds image URLs
+  lib/workspaces.svelte.ts  the workspace list, kept in sync with the database
   lib/settings.svelte.ts  remembered preferences
 src-tauri/                the backend (Rust)
-  src/lib.rs              app setup, the scan_folder command, the thumb:// protocol
+  src/lib.rs              app setup, commands, the thumb:// protocol
+  src/library.rs          the library database (workspaces; tags later)
   src/scan.rs             finds image files in a folder
   src/thumbs.rs           makes thumbnails and viewer previews, keeps the on-disk cache
   src/pool.rs             background workers (newest request first)

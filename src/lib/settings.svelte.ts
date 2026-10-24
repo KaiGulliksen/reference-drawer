@@ -4,7 +4,12 @@ export type SortKey = "name" | "modified" | "size";
 export type TileFit = "cover" | "contain";
 
 interface Settings {
+  /** The workspace shown at launch. */
+  activeWorkspaceId: number | null;
+  sidebarCollapsed: boolean;
+  /** From before workspaces existed; turned into the first workspace, then cleared. */
   lastFolder: string | null;
+  /** From before workspaces existed (now a per-workspace setting). */
   recursive: boolean;
   sortKey: SortKey;
   sortAscending: boolean;
@@ -17,6 +22,8 @@ interface Settings {
 const STORAGE_KEY = "reference-library.settings";
 
 const defaults: Settings = {
+  activeWorkspaceId: null,
+  sidebarCollapsed: false,
   lastFolder: null,
   recursive: false,
   sortKey: "name",
