@@ -5,15 +5,26 @@
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import BoardCanvas from "$lib/Board.svelte";
   import ContextMenu from "$lib/ContextMenu.svelte";
   import Grid from "$lib/Grid.svelte";
   import SettingsDialog from "$lib/SettingsDialog.svelte";
   import Sidebar from "$lib/Sidebar.svelte";
   import TagEditor from "$lib/TagEditor.svelte";
   import Viewer from "$lib/Viewer.svelte";
-  import { scanWorkspace, type ImageEntry, type Workspace } from "$lib/api";
-  import type { MenuRequest } from "$lib/menu";
-  import { baseName, fileManagerName, hasOtherModifier, hasPrimaryModifier, primaryKeyLabel, shortcutLabel } from "$lib/platform";
+  import { addBoardImages, getBoard, scanWorkspace, type Board, type ImageEntry, type Workspace } from "$lib/api";
+  import { placeNewImages } from "$lib/board";
+  import { boards } from "$lib/boards.svelte";
+  import type { MenuItem, MenuRequest } from "$lib/menu";
+  import {
+    baseName,
+    fileManagerName,
+    hasOtherModifier,
+    hasPrimaryModifier,
+    pathKey,
+    primaryKeyLabel,
+    shortcutLabel,
+  } from "$lib/platform";
   import { keyLabel, settings, type SortKey } from "$lib/settings.svelte";
   import { tags, type TagItem } from "$lib/tags.svelte";
   import { workspaces } from "$lib/workspaces.svelte";
@@ -38,6 +49,18 @@
   /** The image the keyboard is on (and that Enter opens). */
   let focusPath = $state<string | null>(null);
   let viewing = $state<number | null>(null);
+  /** When the viewer was opened from a board: the board's images (otherwise it shows the grid's). */
+  let viewerList = $state.raw<ImageEntry[] | null>(null);
+
+  // The mood board being shown instead of the image grid, if any.
+  let activeBoardId = $state<number | null>(null);
+  const activeBoard = $derived(boards.list.find((b) => b.id === activeBoardId) ?? null);
+  let boardCanvas = $state<BoardCanvas | undefined>();
+  let boardZoom = $state(1);
+  let boardCounts = $state({ images: 0, notes: 0 });
+  let renamingBoardId = $state<number | null>(null);
+  /** The board in the sidebar that images are being dragged over. */
+  let dropBoardId = $state<number | null>(null);
 
   // Tag filter: show only images with all of these tags, or only untagged images.
   const filterTags = new SvelteSet<number>();
@@ -109,8 +132,15 @@
 
   const tagKey = $derived(keyLabel(settings.tagHotkey));
 
+  /** The workspace's images by `pathKey`, to find an image's details from its path. */
+  const imagesByPath = $derived(new Map(images.map((image) => [pathKey(image.path), image])));
+
+  /** What the viewer pages through: a board's images, or the grid's. */
+  const viewerImages = $derived(viewerList ?? filtered);
+
   $effect(() => {
-    getCurrentWindow().setTitle(active ? `${active.name} – Reference Library` : "Reference Library");
+    const parts = [activeBoard?.name, active?.name, "Reference Library"].filter(Boolean);
+    getCurrentWindow().setTitle(parts.join(" – "));
   });
 
   // Images that drop out of view (filtered out, deleted, …) also drop out of the selection.
@@ -125,7 +155,7 @@
   // If the image open in the viewer drops out of view (say it was just tagged while showing
   // "Untagged"), move on to the next one; close the viewer when nothing is left.
   $effect(() => {
-    const count = filtered.length;
+    const count = viewerImages.length;
     untrack(() => {
       if (viewing !== null && viewing >= count) viewing = count > 0 ? count - 1 : null;
     });
@@ -148,11 +178,16 @@
   // ---- Workspaces ----
 
   async function openWorkspace(id: number) {
-    if (id === activeId) return;
+    if (id === activeId) {
+      closeBoard(); // clicking the open workspace goes back to its images
+      return;
+    }
     rememberSelection();
     activeId = id;
     settings.activeWorkspaceId = id;
+    activeBoardId = null;
     viewing = null;
+    viewerList = null;
     editor = null;
     scanError = null;
     clearFilter();
@@ -163,6 +198,7 @@
     for (const path of saved?.selected ?? []) selection.add(path);
     focusPath = saved?.focusPath ?? null;
     tags.load(id).catch((e) => (error = String(e)));
+    boards.load(id).catch((e) => (error = String(e)));
     await refresh();
   }
 
@@ -268,7 +304,7 @@
 
   async function removeWorkspace(workspace: Workspace) {
     const confirmed = await ask(
-      `Remove “${workspace.name}” from Reference Library?\n\nIts tags are removed too. The folder and its images are not touched.`,
+      `Remove “${workspace.name}” from Reference Library?\n\nIts tags and boards are removed too. The folder and its images are not touched.`,
       { title: "Remove workspace", kind: "warning", okLabel: "Remove", cancelLabel: "Cancel" },
     );
     if (!confirmed) return;
@@ -284,6 +320,8 @@
         selection.clear();
         focusPath = null;
         tags.clear();
+        boards.clear();
+        activeBoardId = null;
         const next = workspaces.list[0];
         if (next) await openWorkspace(next.id);
         else settings.activeWorkspaceId = null;
@@ -308,11 +346,140 @@
 
   // ---- Tags ----
 
-  /** The images the tag shortcut applies to: the one in the viewer, else the selection, else the focused one. */
+  /**
+   * The images the tag shortcut applies to: the one in the viewer, else the images selected on
+   * the open board, else the grid's selection, else the grid's focused image.
+   */
   function tagTargets(): string[] {
-    if (viewing !== null) return filtered[viewing] ? [filtered[viewing].path] : [];
+    if (viewing !== null) return viewerImages[viewing] ? [viewerImages[viewing].path] : [];
+    if (activeBoardId !== null) return boardCanvas?.selectedPaths() ?? [];
     if (selection.size > 0) return filtered.filter((i) => selection.has(i.path)).map((i) => i.path);
     return focus >= 0 ? [filtered[focus].path] : [];
+  }
+
+  // ---- Boards ----
+
+  function openBoard(id: number) {
+    activeBoardId = id;
+    viewing = null;
+    viewerList = null;
+    boardCounts = { images: 0, notes: 0 };
+  }
+
+  function closeBoard() {
+    activeBoardId = null;
+  }
+
+  async function newBoard() {
+    try {
+      const board = await boards.create();
+      openBoard(board.id);
+      renamingBoardId = board.id; // straight into naming it
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function renameBoard(id: number, name: string) {
+    try {
+      await boards.rename(id, name);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  async function deleteBoard(board: Board) {
+    const confirmed = await ask(
+      `Delete the board “${board.name}”?\n\nThe images on it stay in your library; only the board goes.`,
+      { title: "Delete board", kind: "warning", okLabel: "Delete", cancelLabel: "Cancel" },
+    );
+    if (!confirmed) return;
+    try {
+      await boards.remove(board.id);
+      if (board.id === activeBoardId) closeBoard();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  /** Puts images on a board, in rows below what's already there. Images already on it are skipped. */
+  async function addImagesToBoard(boardId: number, paths: string[]) {
+    const board = boards.list.find((b) => b.id === boardId);
+    if (!board || paths.length === 0) return;
+    try {
+      const data = await getBoard(boardId);
+      const onBoard = new Set(data.items.filter((i) => i.path !== null).map((i) => pathKey(i.path!)));
+      const fresh = paths
+        .map((path) => imagesByPath.get(pathKey(path)))
+        .filter((image): image is ImageEntry => !!image && !onBoard.has(pathKey(image.path)));
+      if (fresh.length === 0) {
+        showNotice(paths.length === 1 ? `That image is already on “${board.name}”.` : `Those images are already on “${board.name}”.`);
+        return;
+      }
+      const spots = placeNewImages(
+        data.items,
+        fresh.map((image) => (image.width && image.height ? image.width / image.height : 1)),
+      );
+      const added = await addBoardImages(
+        boardId,
+        fresh.map((image, i) => ({ path: image.path, ...spots[i] })),
+      );
+      boards.setCount(boardId, data.board.imageCount + added.length);
+      if (boardId === activeBoardId) await boardCanvas?.reload();
+      showNotice(
+        added.length === 1 ? `Added 1 image to “${board.name}”.` : `Added ${added.length} images to “${board.name}”.`,
+        4000,
+      );
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  /** The list of boards to add images to (plus "New board"), as a menu at `x`, `y`. */
+  function showBoardPicker(paths: string[], x: number, y: number) {
+    const items: MenuItem[] = boards.list.map((board) => ({
+      label: board.name,
+      hint: String(board.imageCount),
+      action: () => addImagesToBoard(board.id, paths),
+    }));
+    if (items.length > 0) items.push("separator");
+    items.push({
+      label: "New board",
+      action: async () => {
+        try {
+          const board = await boards.create();
+          await addImagesToBoard(board.id, paths);
+          renamingBoardId = board.id;
+        } catch (e) {
+          error = String(e);
+        }
+      },
+    });
+    menu = { x, y, items };
+  }
+
+  function showBoardMenu(board: Board, x: number, y: number) {
+    menu = {
+      x,
+      y,
+      items: [
+        { label: "Open", action: () => openBoard(board.id) },
+        { label: "Rename", action: () => (renamingBoardId = board.id) },
+        "separator",
+        { label: "Delete board…", danger: true, action: () => deleteBoard(board) },
+      ],
+    };
+  }
+
+  /** The board (in the sidebar) under the pointer while dragging images, if any. */
+  function boardUnder(x: number, y: number): number | null {
+    const el = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-board-drop]");
+    return el ? Number(el.dataset.boardDrop) : null;
+  }
+
+  function openViewerOnBoard(paths: string[], index: number) {
+    viewerList = paths.map((path) => imagesByPath.get(pathKey(path))).filter((image): image is ImageEntry => !!image);
+    viewing = Math.min(index, viewerList.length - 1);
   }
 
   function openTagEditor(paths: string[]) {
@@ -408,6 +575,10 @@
           hint: tagKey,
           action: () => openTagEditor(targets),
         },
+        {
+          label: targets.length > 1 ? `Add ${targets.length} to board…` : "Add to board…",
+          action: () => showBoardPicker(targets, x, y),
+        },
         "separator",
         { label: `Show in ${fileManagerName}`, action: () => revealItemInDir(image.path) },
       ],
@@ -446,21 +617,24 @@
   }
 
   function closeViewer() {
-    const path = viewing !== null ? filtered[viewing]?.path : undefined;
+    // Back in the grid, the image you ended on is selected (not when the viewer came from a board).
+    const path = viewing !== null && viewerList === null ? filtered[viewing]?.path : undefined;
     if (path) {
       selection.clear();
       selection.add(path);
       focusPath = path;
     }
     viewing = null;
+    viewerList = null;
   }
 
-  /** Closes whatever is on top (a menu, the tag editor, Settings, or the viewer), like Esc. */
+  /** Closes whatever is on top: a menu, the tag editor, Settings, the viewer, then a board. */
   function goBack() {
     if (menu) menu = null;
     else if (editor) editor = null;
     else if (settingsOpen) settingsOpen = false;
     else if (viewing !== null) closeViewer();
+    else if (activeBoardId !== null) closeBoard();
   }
 
   // The mouse's back button (button 3) goes back; the forward button (4) does nothing. Both are
@@ -566,6 +740,14 @@
       onadd={addWorkspaceFromDialog}
       onrename={renameWorkspace}
       onmenu={showWorkspaceMenu}
+      boards={boards.list}
+      {activeBoardId}
+      bind:renamingBoardId
+      {dropBoardId}
+      onboardselect={openBoard}
+      onboardadd={newBoard}
+      onboardrename={renameBoard}
+      onboardmenu={showBoardMenu}
       {tagItems}
       {untaggedCount}
       {filterTags}
@@ -593,6 +775,19 @@
         </svg>
       </button>
 
+      {#if active && activeBoard}
+        <button onclick={closeBoard} title="Back to the workspace's images (mouse back button)">← Images</button>
+        <div class="title" title="A board in {active.name}">
+          <span class="name">{activeBoard.name}</span>
+          <span class="path">board in {active.name}</span>
+        </div>
+        <div class="group board-actions">
+          <button onclick={() => boardCanvas?.addNote()} title="Add a text note (or double-click empty space)">Add note</button>
+          <button onclick={() => boardCanvas?.arrangeItems()} title="Tidy the selected items (or everything) into neat rows">Arrange</button>
+          <button onclick={() => boardCanvas?.fit()} title="Zoom to show everything (F)">Fit</button>
+        </div>
+        <span class="zoom">{Math.round(boardZoom * 100)}%</span>
+      {:else}
       {#if active}
         <div class="title" title={active.path}>
           <span class="name">{active.name}</span>
@@ -671,6 +866,7 @@
         title="Thumbnail size"
         aria-label="Thumbnail size"
       />
+      {/if}
 
       <button class="icon" onclick={() => (settingsOpen = true)} title="Settings" aria-label="Settings">
         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
@@ -692,7 +888,7 @@
       </div>
     {/if}
 
-    {#if active && filtering}
+    {#if active && filtering && !activeBoard}
       <div class="filter-bar">
         <span>
           Showing {filtered.length.toLocaleString()} of {images.length.toLocaleString()} images
@@ -707,7 +903,24 @@
       </div>
     {/if}
 
-    {#if active && filtered.length > 0}
+    {#if active && activeBoard}
+      {#key activeBoard.id}
+        <BoardCanvas
+          bind:this={boardCanvas}
+          bind:zoom={boardZoom}
+          boardId={activeBoard.id}
+          {images}
+          active={viewing === null && menu === null && editor === null && !settingsOpen}
+          onopen={openViewerOnBoard}
+          onmenu={(request) => (menu = request)}
+          oncount={(imageCount, notes) => {
+            boardCounts = { images: imageCount, notes };
+            if (activeBoardId !== null) boards.setCount(activeBoardId, imageCount);
+          }}
+          onerror={(message) => (error = message)}
+        />
+      {/key}
+    {:else if active && filtered.length > 0}
       {#key gridKey}
         <Grid
           bind:this={grid}
@@ -724,6 +937,12 @@
           tagsOf={(path) => tags.namesOf(path)}
           onopen={(i) => (viewing = i)}
           onitemmenu={showImageMenu}
+          ondragmove={(x, y) => (dropBoardId = boardUnder(x, y))}
+          ondragend={(x, y, paths) => {
+            const target = boardUnder(x, y);
+            dropBoardId = null;
+            if (paths && target !== null) addImagesToBoard(target, paths);
+          }}
         />
       {/key}
     {:else}
@@ -760,7 +979,15 @@
     {/if}
 
     <footer class="status">
-      {#if active && !scanError}
+      {#if active && activeBoard}
+        <span>
+          {boardCounts.images === 1 ? "1 image" : `${boardCounts.images} images`}{boardCounts.notes
+            ? ` · ${boardCounts.notes === 1 ? "1 note" : `${boardCounts.notes} notes`}`
+            : ""}
+        </span>
+        {#if notice}<span class="notice-text">{notice}</span>{/if}
+        <span class="dim right">Drag empty space to move · scroll to zoom · Shift+drag to select · double-click for a note</span>
+      {:else if active && !scanError}
         <span>{filtered.length.toLocaleString()} images{loading ? " · scanning…" : ""}</span>
         {#if notice}
           <span class="notice-text">{notice}</span>
@@ -778,12 +1005,13 @@
   </main>
 </div>
 
-{#if viewing !== null && filtered[viewing]}
+{#if viewing !== null && viewerImages[viewing]}
   <Viewer
-    images={filtered}
+    images={viewerImages}
     bind:index={viewing}
-    active={editor === null && !settingsOpen}
+    active={editor === null && !settingsOpen && menu === null}
     tagsOf={(path) => tags.namesOf(path)}
+    onaddtoboard={(path, x, y) => showBoardPicker([path], x, y)}
     onclose={closeViewer}
   />
 {/if}
@@ -891,6 +1119,16 @@
   .size {
     width: 120px;
     accent-color: var(--accent);
+  }
+  .board-actions {
+    margin-left: auto;
+  }
+  .zoom {
+    min-width: 44px;
+    text-align: right;
+    font-size: 13px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
   }
   .notice {
     display: flex;

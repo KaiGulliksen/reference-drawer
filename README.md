@@ -36,6 +36,17 @@ and the app says *Finder* where it says *Explorer* here.
   - **Esc** or the **mouse back button** closes it (the back button also closes menus, the tag
     editor and Settings, one at a time)
 - **Subfolders** includes images in folders inside the workspace's folder.
+- **Mood boards** gather the references for one piece in a single place (in the sidebar, under the
+  workspaces; each board belongs to its workspace).
+  - Add images: right-click → *Add to board…*, drag selected tiles onto a board in the sidebar, or
+    *Add to board* in the full-size viewer. Boards point at your images; nothing is copied.
+  - On the board: drag empty space (or with the middle button) to move around, scroll to zoom,
+    drag images to move them, drag the corner handles to resize, Shift+drag to select with a box.
+    **Arrange** tidies the selection (or everything) into rows; **Fit** (or F) shows everything.
+  - Double-click an image to view it full size, empty space to add a note, a note to edit it.
+  - Right-click an image to **crop** it (only what's shown on the board changes, never the file),
+    bring it to the front, or remove it from the board (Delete). Removing never touches the file.
+  - *← Images*, clicking the workspace, or the mouse back button returns to the grid.
 - **Layout** (toolbar): *Masonry* shows tiles shaped like their images, in columns; *Grid* shows
   square tiles in rows, where **Fill / Whole** switches between cropped and whole images.
 - **Settings** (the gear button) has switches for showing tags and file names on thumbnails.
@@ -94,6 +105,9 @@ src/                      the interface (Svelte)
   lib/Sidebar.svelte      the workspace list and the tag list with search
   lib/TagEditor.svelte    adding/removing tags on the selected images
   lib/SettingsDialog.svelte  settings (the tag shortcut)
+  lib/Board.svelte        a mood board: the free canvas, notes and cropping
+  lib/board.ts            board geometry: placing new images, Arrange, Fit
+  lib/boards.svelte.ts    the open workspace's boards, kept in sync with the database
   lib/ContextMenu.svelte  right-click menus (items defined in lib/menu.ts)
   lib/tags.svelte.ts      the open workspace's tags, kept in sync with the database
   lib/platform.ts         differences between Windows, macOS and Linux (shortcuts, names, paths)
@@ -105,6 +119,7 @@ src/                      the interface (Svelte)
   lib/settings.svelte.ts  remembered preferences
 src-tauri/                the backend (Rust)
   src/lib.rs              app setup, commands, the thumb:// protocol
+  src/boards.rs           mood boards and what's on them, with tests
   src/library.rs          the library database (workspaces and tags), with its tests;
                           `reconcile` keeps tags with renamed and moved images
   src/identity.rs         fingerprints of image contents (to recognise renamed files)

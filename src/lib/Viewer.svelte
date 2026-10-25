@@ -15,10 +15,12 @@
     active?: boolean;
     /** The tag names to show for an image. */
     tagsOf?: (path: string) => string[];
+    /** "Add to board" was clicked; `x`, `y` is where to show the list of boards. */
+    onaddtoboard?: (path: string, x: number, y: number) => void;
     onclose: () => void;
   }
 
-  let { images, index = $bindable(), active = true, tagsOf, onclose }: Props = $props();
+  let { images, index = $bindable(), active = true, tagsOf, onaddtoboard, onclose }: Props = $props();
 
   const MARGIN = 24;
   /** Height of the info bar at the bottom, kept clear when fitting the image. */
@@ -290,6 +292,15 @@
       <span class="zoom">{loaded ? `${zoomPercent}%` : ""}</span>
       <button class:on={fitted} onclick={() => (fitted = true)} title="Fit to window (F)">Fit</button>
       <button onclick={() => actualSize()} title="Actual size (1)">1:1</button>
+      {#if onaddtoboard}
+        <button
+          onclick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            onaddtoboard(image.path, r.left, r.top - 4);
+          }}
+          title="Put this image on a mood board">Add to board</button
+        >
+      {/if}
       <button onclick={() => revealItemInDir(image.path)} title="Show the file in {fileManagerName}">Show in folder</button>
       <button onclick={onclose} title="Close (Esc)" aria-label="Close">✕</button>
     </div>

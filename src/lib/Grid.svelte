@@ -35,6 +35,10 @@
     onopen: (index: number) => void;
     /** Right-click on an image. */
     onitemmenu?: (index: number, x: number, y: number) => void;
+    /** While images are dragged out of the grid: where the pointer is (to highlight drop targets). */
+    ondragmove?: (x: number, y: number) => void;
+    /** Images were dropped at this point (or the drag was cancelled: `paths` is null). */
+    ondragend?: (x: number, y: number, paths: string[] | null) => void;
   }
 
   let {
@@ -51,6 +55,8 @@
     tagsOf,
     onopen,
     onitemmenu,
+    ondragmove,
+    ondragend,
   }: Props = $props();
 
   /** Where a Shift-click or Shift+arrow range starts from. */
@@ -77,7 +83,53 @@
     for (let k = from; k <= to; k++) selection.add(images[k].path);
   }
 
+  // ---- Dragging images out of the grid (e.g. onto a board in the sidebar) ----
+  // Done with plain pointer events: the web view's own drag-and-drop is taken over by the
+  // app's "drop a folder onto the window" feature.
+
+  /** How far (in pixels) the pointer must move with the button down before it counts as dragging. */
+  const DRAG_START = 6;
+  let press: { x: number; y: number; index: number } | null = null;
+  let dragging = $state<{ x: number; y: number; count: number } | null>(null);
+  /** The click that ends a drag shouldn't also change the selection. */
+  let ignoreClick = false;
+
+  function onTilePointerDown(e: PointerEvent, i: number) {
+    if (e.button !== 0 || e.shiftKey || hasPrimaryModifier(e) || !ondragend) return;
+    press = { x: e.clientX, y: e.clientY, index: i };
+  }
+
+  function onWindowPointerMove(e: PointerEvent) {
+    if (!press) return;
+    if (!dragging) {
+      if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_START) return;
+      // Dragging an image that isn't selected drags just that one.
+      if (!selection.has(images[press.index].path)) selectOnly(press.index);
+      focus = press.index;
+    }
+    dragging = { x: e.clientX, y: e.clientY, count: selection.size };
+    ondragmove?.(e.clientX, e.clientY);
+  }
+
+  function onWindowPointerUp(e: PointerEvent) {
+    if (dragging) {
+      const paths = images.filter((image) => selection.has(image.path)).map((image) => image.path);
+      ondragend?.(e.clientX, e.clientY, paths);
+      ignoreClick = true;
+      setTimeout(() => (ignoreClick = false), 0);
+    }
+    press = null;
+    dragging = null;
+  }
+
+  function cancelDrag() {
+    if (dragging) ondragend?.(dragging.x, dragging.y, null);
+    press = null;
+    dragging = null;
+  }
+
   function onTileClick(e: MouseEvent, i: number) {
+    if (ignoreClick) return;
     const add = hasPrimaryModifier(e); // Ctrl, or Cmd on a Mac
     if (e.shiftKey) selectRange(i, add);
     else if (add) toggle(i);
@@ -193,6 +245,11 @@
       }
       return;
     }
+    if (e.key === "Escape" && dragging) {
+      cancelDrag();
+      e.preventDefault();
+      return;
+    }
     if (e.key === "Escape" && selection.size > 0) {
       selection.clear();
       e.preventDefault();
@@ -220,7 +277,13 @@
   }
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} onpointermove={onWindowPointerMove} onpointerup={onWindowPointerUp} onblur={cancelDrag} />
+
+{#if dragging}
+  <div class="drag-ghost" style:left="{dragging.x + 14}px" style:top="{dragging.y + 14}px">
+    {dragging.count === 1 ? "1 image" : `${dragging.count} images`}
+  </div>
+{/if}
 
 <div class="scroller" bind:this={scroller} bind:clientWidth={width} bind:clientHeight={height} {onscroll}>
   <div class="canvas" style:height="{layout.totalHeight}px">
@@ -237,6 +300,7 @@
         style:height="{r[3]}px"
         style:transform="translate({r[0]}px, {r[1]}px)"
         title={tileTags.length ? `${image.name}\nTags: ${tileTags.join(", ")}` : image.name}
+        onpointerdown={(e) => onTilePointerDown(e, i)}
         onclick={(e) => onTileClick(e, i)}
         ondblclick={(e) => !hasPrimaryModifier(e) && !e.shiftKey && onopen(i)}
         oncontextmenu={(e) => {
@@ -391,6 +455,18 @@
     text-overflow: ellipsis;
     font-size: 12px;
     color: #fff;
+  }
+  /* Follows the pointer while images are dragged. pointer-events: none lets the page see what's underneath. */
+  .drag-ghost {
+    position: fixed;
+    z-index: 50;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: #fff;
+    background: var(--accent);
+    border-radius: 999px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    pointer-events: none;
   }
   .broken {
     display: grid;

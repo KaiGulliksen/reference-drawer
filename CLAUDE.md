@@ -50,6 +50,10 @@ switched off while migrating (rebuilding a table would otherwise delete everythi
 and each step is checked with `pragma_foreign_key_check` before it is saved. Add a test for every
 migration that starts from the previous version's data.
 
+Images get a record in the `images` table when they're tagged or put on a board (`image_record`);
+board items and tags point at that record, so both follow renamed files. `reconcile` only forgets
+records that are neither tagged nor on a board.
+
 Tagged images are identified by location *and* content: `scan_workspace` calls
 `Library::reconcile`, which keeps tags on files still at their location (even if edited) and moves
 the tags of a missing file to an untagged file with the same fingerprint (`identity.rs`). Never

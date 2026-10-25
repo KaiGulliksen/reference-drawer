@@ -22,9 +22,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-type Result<T> = std::result::Result<T, String>;
+pub(crate) type Result<T> = std::result::Result<T, String>;
 
-fn err(e: impl std::fmt::Display) -> String {
+pub(crate) fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
@@ -84,10 +84,41 @@ const MIGRATIONS: &[&str] = &[
     ALTER TABLE images ADD COLUMN modified INTEGER;
     ALTER TABLE images ADD COLUMN fingerprint TEXT;
     CREATE INDEX images_by_size ON images (workspace_id, size);",
+    // 5: mood boards. A board belongs to a workspace and holds images from it (by their image
+    // record, so they follow renames like tags do) and text notes, each placed freely.
+    // Positions and sizes are in board units (pixels at 100% zoom). `crop_*` are fractions
+    // of the image (0–1) when only part of it is shown.
+    "CREATE TABLE boards (
+        id           INTEGER PRIMARY KEY,
+        workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+        name         TEXT    NOT NULL,
+        position     INTEGER NOT NULL,
+        created_at   INTEGER NOT NULL,
+        view_x       REAL    NOT NULL DEFAULT 0,
+        view_y       REAL    NOT NULL DEFAULT 0,
+        view_zoom    REAL    NOT NULL DEFAULT 0
+    );
+    CREATE TABLE board_items (
+        id       INTEGER PRIMARY KEY,
+        board_id INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+        image_id INTEGER REFERENCES images(id) ON DELETE CASCADE,
+        text     TEXT,
+        x        REAL    NOT NULL,
+        y        REAL    NOT NULL,
+        width    REAL    NOT NULL,
+        height   REAL    NOT NULL,
+        z        INTEGER NOT NULL,
+        crop_x   REAL,
+        crop_y   REAL,
+        crop_w   REAL,
+        crop_h   REAL
+    );
+    CREATE INDEX board_items_by_board ON board_items (board_id);
+    CREATE INDEX board_items_by_image ON board_items (image_id);",
 ];
 
 /// SQL that compares a stored path with a parameter the way this system compares file names.
-fn same_path(column: &str, param: &str) -> String {
+pub(crate) fn same_path(column: &str, param: &str) -> String {
     if PATHS_IGNORE_CASE {
         format!("{column} = {param} COLLATE NOCASE")
     } else {
@@ -130,7 +161,7 @@ pub struct ImageTags {
 }
 
 pub struct Library {
-    conn: Mutex<Connection>,
+    pub(crate) conn: Mutex<Connection>,
 }
 
 impl Library {
@@ -258,27 +289,10 @@ impl Library {
         };
 
         {
-            let mut find_image = tx
-                .prepare(&format!(
-                    "SELECT id FROM images WHERE workspace_id = ?1 AND {}",
-                    same_path("rel_path", "?2")
-                ))
-                .map_err(err)?;
-            let mut add_image =
-                tx.prepare("INSERT INTO images (workspace_id, rel_path) VALUES (?1, ?2)").map_err(err)?;
             let mut link =
                 tx.prepare("INSERT OR IGNORE INTO image_tags (image_id, tag_id) VALUES (?1, ?2)").map_err(err)?;
             for path in paths {
-                let rel = relative_path(&folder, path)?;
-                let found: Option<i64> =
-                    find_image.query_row(params![workspace_id, rel], |r| r.get(0)).optional().map_err(err)?;
-                let image_id = match found {
-                    Some(id) => id,
-                    None => {
-                        add_image.execute(params![workspace_id, rel]).map_err(err)?;
-                        tx.last_insert_rowid()
-                    }
-                };
+                let image_id = image_record(&tx, workspace_id, &relative_path(&folder, path)?)?;
                 link.execute(params![image_id, tag.id]).map_err(err)?;
             }
         }
@@ -374,10 +388,11 @@ impl Library {
     pub fn reconcile(&self, workspace_id: i64, scanned: &[ImageEntry]) -> Result<usize> {
         let (folder, tracked) = {
             let conn = self.conn.lock().unwrap();
-            // Images whose last tag was removed don't need remembering any more.
+            // Images that are neither tagged nor on a board any more don't need remembering.
             conn.execute(
                 "DELETE FROM images WHERE workspace_id = ?1
-                   AND NOT EXISTS (SELECT 1 FROM image_tags WHERE image_id = images.id)",
+                   AND NOT EXISTS (SELECT 1 FROM image_tags WHERE image_id = images.id)
+                   AND NOT EXISTS (SELECT 1 FROM board_items WHERE image_id = images.id)",
                 [workspace_id],
             )
             .map_err(err)?;
@@ -471,8 +486,8 @@ impl Library {
         Ok(relinked)
     }
 
-    /// Fingerprints newly tagged images, so they can be recognised if they're renamed or moved
-    /// before the next scan. Meant to run in the background after tagging.
+    /// Fingerprints images that were just tagged or put on a board, so they can be recognised if
+    /// they're renamed or moved before the next scan. Meant to run in the background.
     pub fn fingerprint_new(&self, workspace_id: i64, paths: &[String]) -> Result<()> {
         let (folder, unprinted) = {
             let conn = self.conn.lock().unwrap();
@@ -551,7 +566,24 @@ fn tracked_images(conn: &Connection, workspace_id: i64) -> Result<Vec<TrackedIma
     .map_err(err)
 }
 
-fn get_workspace(conn: &Connection, id: i64) -> Result<Workspace> {
+/// The library's record for the image at `rel` (a location inside the workspace folder),
+/// created if there isn't one yet. Images get a record when they're tagged or put on a board.
+pub(crate) fn image_record(conn: &Connection, workspace_id: i64, rel: &str) -> Result<i64> {
+    let found: Option<i64> = conn
+        .prepare_cached(&format!("SELECT id FROM images WHERE workspace_id = ?1 AND {}", same_path("rel_path", "?2")))
+        .and_then(|mut find| find.query_row(params![workspace_id, rel], |r| r.get(0)).optional())
+        .map_err(err)?;
+    match found {
+        Some(id) => Ok(id),
+        None => {
+            conn.execute("INSERT INTO images (workspace_id, rel_path) VALUES (?1, ?2)", params![workspace_id, rel])
+                .map_err(err)?;
+            Ok(conn.last_insert_rowid())
+        }
+    }
+}
+
+pub(crate) fn get_workspace(conn: &Connection, id: i64) -> Result<Workspace> {
     conn.query_row("SELECT id, name, path, recursive FROM workspaces WHERE id = ?1", [id], |row| {
         Ok(Workspace { id: row.get(0)?, name: row.get(1)?, path: row.get(2)?, recursive: row.get(3)? })
     })
@@ -595,7 +627,7 @@ fn tag_data(conn: &Connection, workspace_id: i64) -> Result<TagData> {
 
 /// An image's location inside its workspace folder, which is how the database identifies it.
 /// Always written with `/` between folders ("sub/image.jpg"), whatever the system uses.
-fn relative_path(folder: &Path, path: &str) -> Result<String> {
+pub(crate) fn relative_path(folder: &Path, path: &str) -> Result<String> {
     let rel = Path::new(path)
         .strip_prefix(folder)
         .map_err(|_| format!("{path} is not inside this workspace's folder."))?;
@@ -604,7 +636,7 @@ fn relative_path(folder: &Path, path: &str) -> Result<String> {
 }
 
 /// The reverse of `relative_path`: the full path, written the way this system (and the folder scan) writes it.
-fn full_path(folder: &Path, rel: &str) -> String {
+pub(crate) fn full_path(folder: &Path, rel: &str) -> String {
     let mut path = folder.to_path_buf();
     for part in rel.split('/') {
         path.push(part);
@@ -658,7 +690,7 @@ fn folder_path(path: &str) -> Result<PathBuf> {
     Ok(folder)
 }
 
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
 

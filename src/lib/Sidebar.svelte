@@ -1,8 +1,8 @@
 <!--
-  The left sidebar: the workspaces, and the tags used in the open workspace.
+  The left sidebar: the workspaces, and the open workspace's boards and tags.
 -->
 <script lang="ts">
-  import type { Workspace } from "./api";
+  import type { Board, Workspace } from "./api";
   import { hasPrimaryModifier, primaryKeyLabel, shortcutLabel } from "./platform";
   import type { TagItem } from "./tags.svelte";
 
@@ -17,6 +17,18 @@
     onadd: () => void;
     onrename: (id: number, name: string) => void;
     onmenu: (workspace: Workspace, x: number, y: number) => void;
+
+    /** The open workspace's mood boards. */
+    boards: Board[];
+    /** The board being shown, if any (otherwise the image grid is). */
+    activeBoardId: number | null;
+    renamingBoardId: number | null;
+    /** The board images are being dragged over, to highlight it as the drop target. */
+    dropBoardId: number | null;
+    onboardselect: (id: number) => void;
+    onboardadd: () => void;
+    onboardrename: (id: number, name: string) => void;
+    onboardmenu: (board: Board, x: number, y: number) => void;
 
     /** Tags used by images in the open workspace, sorted by name. */
     tagItems: TagItem[];
@@ -43,6 +55,14 @@
     onadd,
     onrename,
     onmenu,
+    boards,
+    activeBoardId,
+    renamingBoardId = $bindable(),
+    dropBoardId,
+    onboardselect,
+    onboardadd,
+    onboardrename,
+    onboardmenu,
     tagItems,
     untaggedCount,
     filterTags,
@@ -69,6 +89,13 @@
     renamingId = null;
     const name = input.value.trim();
     if (save && name && name !== workspace.name) onrename(workspace.id, name);
+  }
+
+  function finishBoardRename(board: Board, input: HTMLInputElement, save: boolean) {
+    if (renamingBoardId !== board.id) return;
+    renamingBoardId = null;
+    const name = input.value.trim();
+    if (save && name && name !== board.name) onboardrename(board.id, name);
   }
 
   function finishTagRename(tag: TagItem, input: HTMLInputElement, save: boolean) {
@@ -168,6 +195,59 @@
   </section>
 
   {#if activeId !== null && !missing.has(activeId)}
+    <section class="boards">
+      <header>
+        <h2>Boards</h2>
+        <button class="icon" onclick={onboardadd} title="Make a new mood board" aria-label="New board">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+          </svg>
+        </button>
+      </header>
+      {#if boards.length === 0}
+        <p class="empty">Gather the references for a piece in one place. <button class="link" onclick={onboardadd}>Make a board</button></p>
+      {/if}
+      <ul>
+        {#each boards as board (board.id)}
+          <li class:active={board.id === activeBoardId} class:drop-target={board.id === dropBoardId} data-board-drop={board.id}>
+            {#if renamingBoardId === board.id}
+              <input
+                class="rename"
+                value={board.name}
+                aria-label="Board name"
+                {@attach focusAndSelect}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") finishBoardRename(board, e.currentTarget, true);
+                  else if (e.key === "Escape") finishBoardRename(board, e.currentTarget, false);
+                }}
+                onblur={(e) => finishBoardRename(board, e.currentTarget, true)}
+              />
+            {:else}
+              <button
+                class="item"
+                title={`${board.name}\nDrop images here to add them · double-click to rename`}
+                aria-current={board.id === activeBoardId ? "page" : undefined}
+                onclick={() => onboardselect(board.id)}
+                ondblclick={() => (renamingBoardId = board.id)}
+                oncontextmenu={(e) => {
+                  e.preventDefault();
+                  onboardmenu(board, e.clientX, e.clientY);
+                }}
+              >
+                <svg class="folder" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+                  <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.2" />
+                  <rect x="3.5" y="4.5" width="4" height="3" fill="currentColor" opacity="0.6" />
+                  <rect x="8.5" y="6.5" width="4" height="5" fill="currentColor" opacity="0.6" />
+                </svg>
+                <span class="name">{board.name}</span>
+                <span class="count">{board.imageCount}</span>
+              </button>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    </section>
+
     <section class="tags">
       <header>
         <h2>Tags</h2>
@@ -317,6 +397,14 @@
   }
   li.active {
     background: var(--button-hover);
+  }
+  /* A board that images are being dragged over. */
+  li.drop-target {
+    background: #24406e;
+    outline: 1px solid var(--accent);
+  }
+  section.boards {
+    margin-top: 18px;
   }
   li.active::before {
     content: "";

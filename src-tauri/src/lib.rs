@@ -1,3 +1,4 @@
+mod boards;
 mod identity;
 mod library;
 mod parallel;
@@ -7,6 +8,7 @@ mod scan;
 mod sizes;
 mod thumbs;
 
+use boards::{Board, BoardData, BoardItem, BoardView, NewImage};
 use library::{Library, Tag, TagData, Workspace};
 use pool::WorkerPool;
 use scan::ImageEntry;
@@ -153,6 +155,78 @@ async fn delete_tag(library: State<'_, Library>, workspace_id: i64, tag_id: i64)
     library.delete_tag(workspace_id, tag_id)
 }
 
+#[tauri::command]
+async fn list_boards(library: State<'_, Library>, workspace_id: i64) -> Result<Vec<Board>, String> {
+    library.boards(workspace_id)
+}
+
+#[tauri::command]
+async fn create_board(library: State<'_, Library>, workspace_id: i64, name: String) -> Result<Board, String> {
+    library.create_board(workspace_id, &name)
+}
+
+#[tauri::command]
+async fn rename_board(library: State<'_, Library>, id: i64, name: String) -> Result<Board, String> {
+    library.rename_board(id, &name)
+}
+
+#[tauri::command]
+async fn delete_board(library: State<'_, Library>, id: i64) -> Result<(), String> {
+    library.delete_board(id)
+}
+
+#[tauri::command]
+async fn get_board(library: State<'_, Library>, id: i64) -> Result<BoardData, String> {
+    library.board_data(id)
+}
+
+#[tauri::command]
+async fn add_board_images(
+    app: AppHandle,
+    library: State<'_, Library>,
+    board_id: i64,
+    images: Vec<NewImage>,
+) -> Result<Vec<BoardItem>, String> {
+    let added = library.add_board_images(board_id, &images)?;
+    // Like tagging: fingerprint them in the background, so they follow renames and moves.
+    let workspace_id = library.board_data(board_id)?.board.workspace_id;
+    let paths: Vec<String> = images.into_iter().map(|image| image.path).collect();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = app.state::<Library>().fingerprint_new(workspace_id, &paths) {
+            eprintln!("Couldn't fingerprint images added to a board: {e}");
+        }
+    });
+    Ok(added)
+}
+
+#[tauri::command]
+async fn add_board_note(
+    library: State<'_, Library>,
+    board_id: i64,
+    text: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+) -> Result<BoardItem, String> {
+    library.add_board_note(board_id, &text, x, y, width, height)
+}
+
+#[tauri::command]
+async fn update_board_items(library: State<'_, Library>, board_id: i64, items: Vec<BoardItem>) -> Result<(), String> {
+    library.update_board_items(board_id, &items)
+}
+
+#[tauri::command]
+async fn remove_board_items(library: State<'_, Library>, board_id: i64, ids: Vec<i64>) -> Result<(), String> {
+    library.remove_board_items(board_id, &ids)
+}
+
+#[tauri::command]
+async fn set_board_view(library: State<'_, Library>, board_id: i64, view: BoardView) -> Result<(), String> {
+    library.set_board_view(board_id, view)
+}
+
 /// The real width and height of an image (after EXIF rotation), without decoding it.
 #[tauri::command]
 async fn image_size(app: AppHandle, path: String) -> Result<ImageSize, String> {
@@ -263,6 +337,16 @@ pub fn run() {
             remove_tag,
             rename_tag,
             delete_tag,
+            list_boards,
+            create_board,
+            rename_board,
+            delete_board,
+            get_board,
+            add_board_images,
+            add_board_note,
+            update_board_items,
+            remove_board_items,
+            set_board_view,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
