@@ -6,6 +6,7 @@
   import { untrack } from "svelte";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import { formatBytes, fullUrl, imageSize, previewSizeForScreen, previewUrl, thumbUrl, type ImageEntry } from "./api";
+  import { fileManagerName } from "./platform";
 
   interface Props {
     images: ImageEntry[];
@@ -289,7 +290,7 @@
       <span class="zoom">{loaded ? `${zoomPercent}%` : ""}</span>
       <button class:on={fitted} onclick={() => (fitted = true)} title="Fit to window (F)">Fit</button>
       <button onclick={() => actualSize()} title="Actual size (1)">1:1</button>
-      <button onclick={() => revealItemInDir(image.path)} title="Show the file in Explorer">Show in folder</button>
+      <button onclick={() => revealItemInDir(image.path)} title="Show the file in {fileManagerName}">Show in folder</button>
       <button onclick={onclose} title="Close (Esc)" aria-label="Close">✕</button>
     </div>
   </div>

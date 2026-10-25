@@ -31,7 +31,7 @@
       return;
     }
     if (e.ctrlKey || e.altKey || e.metaKey) {
-      message = "Use a single key without Ctrl or Alt.";
+      message = "Use a single key, without modifier keys like Ctrl, Alt or ⌘.";
       return;
     }
     const key = e.key.toLowerCase();
@@ -47,13 +47,32 @@
 
 <svelte:window {onkeydown} />
 
-<div class="backdrop" role="presentation" onpointerdown={onclose}></div>
+<!-- Only ordinary clicks close it here; the mouse's back button is handled by the page. -->
+<div class="backdrop" role="presentation" onpointerdown={(e) => e.button <= 2 && onclose()}></div>
 
 <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
   <header>
     <h2 id="settings-title">Settings</h2>
     <button class="close" onclick={onclose} aria-label="Close" title="Close (Esc)">✕</button>
   </header>
+
+  <section>
+    <h3>Thumbnails</h3>
+    <label class="row toggle">
+      <div>
+        <div>Show tags</div>
+        <div class="hint">Each image's tags along the bottom of its thumbnail.</div>
+      </div>
+      <input type="checkbox" bind:checked={settings.showTileTags} />
+    </label>
+    <label class="row toggle">
+      <div>
+        <div>Show file names</div>
+        <div class="hint">Each image's file name on its thumbnail. It's always shown in the status bar.</div>
+      </div>
+      <input type="checkbox" bind:checked={settings.showTileNames} />
+    </label>
+  </section>
 
   <section>
     <h3>Keyboard shortcuts</h3>
@@ -130,6 +149,20 @@
     align-items: center;
     justify-content: space-between;
     gap: 16px;
+  }
+  .toggle {
+    padding: 4px 0;
+    cursor: pointer;
+  }
+  .toggle + .toggle {
+    margin-top: 8px;
+  }
+  .toggle input {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
   }
   .hint {
     margin-top: 2px;

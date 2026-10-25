@@ -1,19 +1,22 @@
 mod library;
+mod platform;
 mod pool;
 mod scan;
+mod sizes;
 mod thumbs;
 
 use library::{Library, Tag, TagData, Workspace};
 use pool::WorkerPool;
 use scan::ImageEntry;
 use serde::Serialize;
+use sizes::SizeCache;
 use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
 use tauri::http::{Request, Response, StatusCode, header};
 use tauri::{AppHandle, Manager, State, UriSchemeContext, UriSchemeResponder, Wry};
 
-/// Set this to use a different folder for the library database, e.g. a throwaway one for testing.
+/// Set this to use a different folder for the library database and caches, e.g. a throwaway one for testing.
 const DATA_DIR_ENV: &str = "REFERENCE_LIBRARY_DATA_DIR";
 
 /// Where generated thumbnails are stored (inside %LOCALAPPDATA% on Windows).
@@ -52,9 +55,13 @@ async fn scan_folder(app: AppHandle, path: String, recursive: bool) -> Result<Sc
         .map_err(|e| e.to_string())?;
 
     let to_scan = folder.clone();
-    let images = tauri::async_runtime::spawn_blocking(move || scan::scan(&to_scan, recursive))
-        .await
-        .map_err(|e| e.to_string())?;
+    let images = tauri::async_runtime::spawn_blocking(move || {
+        let mut images = scan::scan(&to_scan, recursive);
+        app.state::<SizeCache>().fill(&mut images);
+        images
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     Ok(ScanResult { folder: folder.to_string_lossy().into_owned(), images })
 }
@@ -214,13 +221,14 @@ pub fn run() {
         .manage(WorkerPool::new(workers))
         .register_asynchronous_uri_scheme_protocol("thumb", thumb_protocol)
         .setup(|app| {
-            let cache_dir = app.path().app_cache_dir()?.join("thumbs");
-            app.manage(ThumbCacheDir(cache_dir));
-
-            let data_dir = match std::env::var_os(DATA_DIR_ENV) {
-                Some(dir) => PathBuf::from(dir),
-                None => app.path().app_data_dir()?,
+            // With DATA_DIR_ENV set (for testing), the caches go in that folder too, so a test
+            // run touches nothing of the real app's.
+            let (data_dir, cache_dir) = match std::env::var_os(DATA_DIR_ENV) {
+                Some(dir) => (PathBuf::from(&dir), PathBuf::from(&dir).join("cache")),
+                None => (app.path().app_data_dir()?, app.path().app_cache_dir()?),
             };
+            app.manage(ThumbCacheDir(cache_dir.join("thumbs")));
+            app.manage(SizeCache::open(&cache_dir.join("sizes.db"))?);
             app.manage(Library::open(&data_dir.join("library.db"))?);
             Ok(())
         })

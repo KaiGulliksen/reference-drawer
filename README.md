@@ -6,6 +6,9 @@ and [Svelte 5](https://svelte.dev) for the interface.
 
 ## Using it
 
+Shortcuts are written for Windows and Linux; on a Mac use **⌘ (Cmd)** wherever it says Ctrl,
+and the app says *Finder* where it says *Explorer* here.
+
 - **Workspaces** keep separate collections apart, e.g. *Art inspiration* and *Home interiors*.
   Each one shows the images from its own folder. Add one with **+** in the sidebar (or drag a folder
   onto the window), switch with a click or **Ctrl+1…9**, and hide the sidebar with **Ctrl+B**.
@@ -29,19 +32,39 @@ and [Svelte 5](https://svelte.dev) for the interface.
     right-click it to delete it. Tags belong to their workspace.
 - In the viewer:
   - scroll to zoom (towards the cursor) · drag to pan · double-click to toggle fit / actual size
-  - ← / → (or A / D) previous / next · F or 0 fit · 1 actual size · + / − zoom · Esc close
+  - ← / → (or A / D) previous / next · F or 0 fit · 1 actual size · + / − zoom
+  - **Esc** or the **mouse back button** closes it (the back button also closes menus, the tag
+    editor and Settings, one at a time)
 - **Subfolders** includes images in folders inside the workspace's folder.
-- **Fill / Whole** switches between cropped square thumbnails and whole images.
+- **Layout** (toolbar): *Masonry* shows tiles shaped like their images, in columns; *Grid* shows
+  square tiles in rows, where **Fill / Whole** switches between cropped and whole images.
+- **Settings** (the gear button) has switches for showing tags and file names on thumbnails.
+  Tags are shown and names hidden by default; the focused image's name is always in the status bar.
 
-Workspaces and tags are stored in `%APPDATA%\com.kaigulliksen.reflibrary\library.db` (an SQLite
-database). Tags are linked to an image by its path inside the workspace folder, so they survive
+Workspaces and tags are stored in an SQLite database, `library.db`, in the app's data folder:
+`%APPDATA%\com.kaigulliksen.reflibrary` on Windows, `~/Library/Application Support/com.kaigulliksen.reflibrary`
+on macOS, `~/.local/share/com.kaigulliksen.reflibrary` on Linux. Tags are linked to an image by its path inside the workspace folder, so they survive
 moving the whole folder (use *Change folder…*), but not renaming or moving a single file outside the app.
 
 Supported formats: JPG, PNG, WebP, GIF, BMP, AVIF.
 
+## Platforms
+
+Windows is the main platform, but the app is written to work on **macOS** and **Linux** too:
+shortcuts use Cmd on a Mac, the library database is the same on every system, and file names
+follow each system's rules about capital letters.
+
+To build for all three, open the repository on GitHub → **Actions** → **Build for all platforms** →
+**Run workflow**. When it finishes, the installers (Windows `.exe`, macOS `.dmg`, Linux `.deb` /
+`.rpm` / `.AppImage`) can be downloaded from the run's page. It uses GitHub Actions minutes, and only
+runs when started by hand. The macOS build isn't signed, so the first time you open it, right-click
+the app → Open.
+
 ## Running and building
 
-You need [Node.js](https://nodejs.org), [Rust](https://rustup.rs) and the Microsoft C++ Build Tools.
+You need [Node.js](https://nodejs.org) and [Rust](https://rustup.rs), plus the
+[system requirements for Tauri](https://tauri.app/start/prerequisites/): the Microsoft C++ Build Tools
+on Windows, Xcode Command Line Tools on macOS, or WebKitGTK development packages on Linux.
 
 ```bash
 npm install          # first time only
@@ -63,7 +86,9 @@ src/                      the interface (Svelte)
   lib/SettingsDialog.svelte  settings (the tag shortcut)
   lib/ContextMenu.svelte  right-click menus (items defined in lib/menu.ts)
   lib/tags.svelte.ts      the open workspace's tags, kept in sync with the database
+  lib/platform.ts         differences between Windows, macOS and Linux (shortcuts, names, paths)
   lib/Grid.svelte         virtualized thumbnail grid (only on-screen tiles exist)
+  lib/layout.ts           where each tile goes, for the grid and masonry layouts
   lib/Viewer.svelte       full-size viewer with zoom/pan
   lib/api.ts              calls into the Rust side, builds image URLs
   lib/workspaces.svelte.ts  the workspace list, kept in sync with the database
@@ -72,6 +97,8 @@ src-tauri/                the backend (Rust)
   src/lib.rs              app setup, commands, the thumb:// protocol
   src/library.rs          the library database (workspaces and tags), with its tests
   src/scan.rs             finds image files in a folder
+  src/sizes.rs            remembers each image's pixel size (for masonry) in a cache
+  src/platform.rs         differences between Windows, macOS and Linux
   src/thumbs.rs           makes thumbnails and viewer previews, keeps the on-disk cache
   src/pool.rs             background workers (newest request first)
   tauri.conf.json         window and app settings
@@ -81,7 +108,7 @@ src-tauri/                the backend (Rust)
 **Why it stays light**
 
 - **Thumbnails, not originals, in the grid.** Each image is shrunk to 400 px once and cached in
-  `%LOCALAPPDATA%\com.kaigulliksen.reflibrary\thumbs` (about 15 KB each). JPEGs are decoded directly
+  the app's cache folder (`%LOCALAPPDATA%\com.kaigulliksen.reflibrary\thumbs` on Windows; about 15 KB each). JPEGs are decoded directly
   at reduced size, which is much faster than decoding the full image.
 - **Virtualized grid.** Only visible tiles exist, so big folders cost about the same as small ones.
 - **Images go straight from disk to the webview** via custom URLs (`thumb://` for thumbnails,
@@ -91,4 +118,7 @@ src-tauri/                the backend (Rust)
   past the preview's detail, and is released again when you zoom back out.
 - **Thumbnails pause while you scroll fast**, so tiles that only flash past aren't generated.
 
-Deleting the thumbs folder is safe; thumbnails are recreated as needed.
+- **Image sizes are read from file headers once**, then cached (`sizes.db` in the cache folder),
+  so the masonry layout costs almost nothing after the first scan of a folder.
+
+Deleting the thumbs folder or `sizes.db` is safe; they're recreated as needed.

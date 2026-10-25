@@ -3,6 +3,7 @@
 -->
 <script lang="ts">
   import type { Workspace } from "./api";
+  import { hasPrimaryModifier, primaryKeyLabel, shortcutLabel } from "./platform";
   import type { TagItem } from "./tags.svelte";
 
   interface Props {
@@ -27,7 +28,7 @@
     tagSearch: string;
     /** The tag whose name is being edited, if any. */
     renamingTagId: number | null;
-    /** Click on a tag (or on "Untagged"). `add` is true for Ctrl-click, to combine tags. */
+    /** Click on a tag (or on "Untagged"). `add` is true for Ctrl-click (Cmd on a Mac), to combine tags. */
     ontagclick: (id: number | "untagged", add: boolean) => void;
     ontagrename: (id: number, name: string) => void;
     ontagmenu: (tag: TagItem, x: number, y: number) => void;
@@ -82,7 +83,7 @@
       // Enter shows the images with the best-matching tag, and hands the keyboard back to
       // the grid so you can carry on with the arrow keys or the tag shortcut.
       e.preventDefault();
-      ontagclick(shownTags[0].id, e.ctrlKey);
+      ontagclick(shownTags[0].id, hasPrimaryModifier(e));
       e.currentTarget instanceof HTMLInputElement && e.currentTarget.blur();
     } else if (e.key === "Escape") {
       e.preventDefault();
@@ -92,7 +93,7 @@
   }
 
   function shortcutHint(i: number) {
-    return i < 9 ? `\nCtrl+${i + 1} to switch here` : "";
+    return i < 9 ? `\n${shortcutLabel(String(i + 1))} to switch here` : "";
   }
 </script>
 
@@ -219,8 +220,8 @@
             {:else}
               <button
                 class="item tag"
-                title={`Show images tagged “${tag.name}”\nCtrl+click to combine with other tags · double-click to rename`}
-                onclick={(e) => ontagclick(tag.id, e.ctrlKey || e.metaKey)}
+                title={`Show images tagged “${tag.name}”\n${primaryKeyLabel}+click to combine with other tags · double-click to rename`}
+                onclick={(e) => ontagclick(tag.id, hasPrimaryModifier(e))}
                 ondblclick={() => (renamingTagId = tag.id)}
                 oncontextmenu={(e) => {
                   e.preventDefault();

@@ -2,6 +2,8 @@
 
 export type SortKey = "name" | "modified" | "size";
 export type TileFit = "cover" | "contain";
+/** "grid": square tiles in rows. "masonry": columns of tiles shaped like their images. */
+export type GridLayout = "grid" | "masonry";
 
 interface Settings {
   /** The workspace shown at launch. */
@@ -15,8 +17,13 @@ interface Settings {
   sortAscending: boolean;
   /** Target thumbnail width in the grid, in CSS pixels. */
   tileSize: number;
-  /** "cover" crops thumbnails to fill square tiles, "contain" shows the whole image. */
+  /** "cover" crops thumbnails to fill square tiles, "contain" shows the whole image (grid layout only). */
   tileFit: TileFit;
+  layout: GridLayout;
+  /** Show each image's tags on its thumbnail. */
+  showTileTags: boolean;
+  /** Show each image's file name on its thumbnail. */
+  showTileNames: boolean;
   /** The key that opens the tag editor (a `KeyboardEvent.key` value, lower-cased). */
   tagHotkey: string;
 }
@@ -32,6 +39,9 @@ const defaults: Settings = {
   sortAscending: true,
   tileSize: 180,
   tileFit: "cover",
+  layout: "masonry",
+  showTileTags: true,
+  showTileNames: false,
   tagHotkey: "t",
 };
 

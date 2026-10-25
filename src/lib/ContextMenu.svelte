@@ -52,7 +52,7 @@
 <div
   class="backdrop"
   role="presentation"
-  onpointerdown={onclose}
+  onpointerdown={(e) => e.button <= 2 && onclose()}
   oncontextmenu={(e) => {
     e.preventDefault();
     onclose();

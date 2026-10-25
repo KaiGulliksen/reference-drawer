@@ -13,6 +13,7 @@
   import Viewer from "$lib/Viewer.svelte";
   import { scanFolder, type ImageEntry, type Workspace } from "$lib/api";
   import type { MenuRequest } from "$lib/menu";
+  import { baseName, fileManagerName, hasOtherModifier, hasPrimaryModifier, primaryKeyLabel, shortcutLabel } from "$lib/platform";
   import { keyLabel, settings, type SortKey } from "$lib/settings.svelte";
   import { tags, type TagItem } from "$lib/tags.svelte";
   import { workspaces } from "$lib/workspaces.svelte";
@@ -309,7 +310,7 @@
       showNotice("Select one or more images to tag first.");
       return;
     }
-    const subject = paths.length === 1 ? (paths[0].split(/[\\/]/).pop() ?? paths[0]) : `${paths.length} images`;
+    const subject = paths.length === 1 ? baseName(paths[0]) : `${paths.length} images`;
     editor = { paths, subject };
   }
 
@@ -377,7 +378,7 @@
       items: [
         { label: "Rename", action: () => (renamingId = workspace.id) },
         { label: "Change folder…", action: () => changeFolder(workspace) },
-        { label: "Show folder in Explorer", action: () => revealItemInDir(workspace.path) },
+        { label: `Show folder in ${fileManagerName}`, action: () => revealItemInDir(workspace.path) },
         "separator",
         { label: "Remove workspace…", danger: true, action: () => removeWorkspace(workspace) },
       ],
@@ -398,7 +399,7 @@
           action: () => openTagEditor(targets),
         },
         "separator",
-        { label: "Show in Explorer", action: () => revealItemInDir(image.path) },
+        { label: `Show in ${fileManagerName}`, action: () => revealItemInDir(image.path) },
       ],
     };
   }
@@ -444,6 +445,32 @@
     viewing = null;
   }
 
+  /** Closes whatever is on top (a menu, the tag editor, Settings, or the viewer), like Esc. */
+  function goBack() {
+    if (menu) menu = null;
+    else if (editor) editor = null;
+    else if (settingsOpen) settingsOpen = false;
+    else if (viewing !== null) closeViewer();
+  }
+
+  // The mouse's back button (button 3) goes back; the forward button (4) does nothing. Both are
+  // blocked here so the web view doesn't try to navigate the page itself.
+  const BACK_BUTTON = 3;
+  const FORWARD_BUTTON = 4;
+
+  function onmousedown(e: MouseEvent) {
+    if (e.button === BACK_BUTTON || e.button === FORWARD_BUTTON) e.preventDefault();
+  }
+
+  function onmouseup(e: MouseEvent) {
+    if (e.button === BACK_BUTTON) {
+      e.preventDefault();
+      goBack();
+    } else if (e.button === FORWARD_BUTTON) {
+      e.preventDefault();
+    }
+  }
+
   function onkeydown(e: KeyboardEvent) {
     if (editor || settingsOpen || menu) return;
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
@@ -455,7 +482,8 @@
       return;
     }
 
-    if (viewing !== null || !e.ctrlKey || e.altKey || e.metaKey) return;
+    // The rest are Ctrl shortcuts (Cmd on a Mac).
+    if (viewing !== null || !hasPrimaryModifier(e) || hasOtherModifier(e)) return;
     if (e.key >= "1" && e.key <= "9") {
       // Ctrl+1 … Ctrl+9 switch to the workspace at that position.
       const workspace = workspaces.list[Number(e.key) - 1];
@@ -515,7 +543,7 @@
   });
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} {onmousedown} {onmouseup} />
 
 <div class="app">
   {#if !settings.sidebarCollapsed}
@@ -546,7 +574,7 @@
         class="icon"
         class:on={!settings.sidebarCollapsed}
         onclick={() => (settings.sidebarCollapsed = !settings.sidebarCollapsed)}
-        title="Show or hide the sidebar (Ctrl+B)"
+        title="Show or hide the sidebar ({shortcutLabel('B')})"
         aria-label="Toggle sidebar"
       >
         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
@@ -562,8 +590,6 @@
         </div>
         <button onclick={refresh} title="Rescan the folder for new or removed images">Refresh</button>
       {/if}
-
-      <div class="spacer"></div>
 
       <label class="check" title="Also show images inside subfolders of this workspace's folder">
         <input type="checkbox" checked={active?.recursive ?? false} disabled={!active} onchange={toggleRecursive} />
@@ -583,10 +609,47 @@
         >
       </div>
 
-      <div class="group">
-        <button class:on={settings.tileFit === "cover"} onclick={() => (settings.tileFit = "cover")} title="Crop thumbnails to fill the tiles">Fill</button>
-        <button class:on={settings.tileFit === "contain"} onclick={() => (settings.tileFit = "contain")} title="Show whole images">Whole</button>
+      <div class="group" role="radiogroup" aria-label="Layout">
+        <button
+          class="icon"
+          class:on={settings.layout === "masonry"}
+          onclick={() => (settings.layout = "masonry")}
+          title="Masonry: tiles shaped like their images"
+          aria-label="Masonry layout"
+          role="radio"
+          aria-checked={settings.layout === "masonry"}
+        >
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <rect x="1.5" y="1.5" width="5.5" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+            <rect x="1.5" y="10.5" width="5.5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+            <rect x="9" y="1.5" width="5.5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+            <rect x="9" y="7.5" width="5.5" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+          </svg>
+        </button>
+        <button
+          class="icon"
+          class:on={settings.layout === "grid"}
+          onclick={() => (settings.layout = "grid")}
+          title="Grid: square tiles in rows"
+          aria-label="Grid layout"
+          role="radio"
+          aria-checked={settings.layout === "grid"}
+        >
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+            <rect x="9" y="1.5" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+            <rect x="1.5" y="9" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+            <rect x="9" y="9" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+          </svg>
+        </button>
       </div>
+
+      {#if settings.layout === "grid"}
+        <div class="group">
+          <button class:on={settings.tileFit === "cover"} onclick={() => (settings.tileFit = "cover")} title="Crop thumbnails to fill the tiles">Fill</button>
+          <button class:on={settings.tileFit === "contain"} onclick={() => (settings.tileFit = "contain")} title="Show whole images">Whole</button>
+        </div>
+      {/if}
 
       <input
         class="size"
@@ -639,8 +702,11 @@
         <Grid
           bind:this={grid}
           images={filtered}
+          mode={settings.layout}
           tileSize={settings.tileSize}
           tileFit={settings.tileFit}
+          showTags={settings.showTileTags}
+          showNames={settings.showTileNames}
           {selection}
           bind:focus={() => focus, (i) => (focusPath = filtered[i]?.path ?? null)}
           active={viewing === null && menu === null && editor === null && !settingsOpen}
@@ -696,7 +762,7 @@
             <span class="status-tags">{tags.namesOf(filtered[focus].path).join(" · ")}</span>
           {/if}
         {/if}
-        <span class="dim right">{tagKey} to tag · Ctrl/Shift+click to select several · double-click to view</span>
+        <span class="dim right">{tagKey} to tag · {primaryKeyLabel}/Shift+click to select several · double-click to view</span>
       {/if}
     </footer>
   </main>
@@ -751,7 +817,9 @@
   .toolbar {
     display: flex;
     align-items: center;
-    gap: 10px;
+    /* In a narrow window the controls continue on a second row instead of being cut off. */
+    flex-wrap: wrap;
+    gap: 6px 10px;
     padding: 8px 12px;
     background: var(--panel);
     border-bottom: 1px solid var(--border);
@@ -777,7 +845,10 @@
     display: flex;
     align-items: baseline;
     gap: 10px;
-    min-width: 0;
+    /* Takes whatever room is left (shortening the path if needed), so only the buttons
+       themselves can push the toolbar onto a second row. */
+    flex: 1 1 0;
+    min-width: 120px;
     overflow: hidden;
     white-space: nowrap;
   }
@@ -790,9 +861,6 @@
     font-size: 12px;
     color: var(--text-dim);
   }
-  .spacer {
-    flex: 1;
-  }
   .group {
     display: flex;
     gap: 2px;
@@ -801,6 +869,8 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    /* Right-aligned (also when no workspace is open and there's no title taking up the space). */
+    margin-left: auto;
     white-space: nowrap;
     cursor: pointer;
   }

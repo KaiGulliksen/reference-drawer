@@ -1,0 +1,73 @@
+# Builds Reference Library for Windows, macOS and Linux on GitHub's computers.
+#
+# It only runs when started by hand (GitHub → Actions → "Build for all platforms" → Run workflow),
+# so it never uses build minutes on its own. The finished installers can be downloaded from the
+# run's page under "Artifacts".
+#
+# Each platform also type-checks the interface and runs the library tests, which is the only way
+# to check the macOS and Linux behaviour without one of those computers.
+
+name: Build for all platforms
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+          - name: macOS (Apple Silicon)
+            os: macos-latest
+          - name: Linux
+            os: ubuntu-22.04
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install JavaScript packages
+        run: npm ci
+
+      - name: Check the interface code
+        run: npm run check
+
+      - name: Run the library tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib
+
+      - name: Build the app and installers
+        run: npm run tauri build
+
+      - name: Upload the installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: Reference Library (${{ matrix.name }})
+          path: |
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
+            src-tauri/target/release/bundle/**/*.AppImage
+          if-no-files-found: error

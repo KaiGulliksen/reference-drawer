@@ -5,9 +5,10 @@ use std::path::Path;
 use std::time::UNIX_EPOCH;
 use walkdir::{DirEntry, WalkDir};
 
-/// File types the app shows. All of these can be displayed by WebView2; all
-/// except AVIF can also be turned into thumbnails by the `image` crate (AVIF
-/// thumbnails fall back to the original file).
+/// File types the app shows. All of these can be displayed by the system's web view
+/// (WebView2 on Windows, WebKit on macOS and Linux; AVIF needs a recent one). All except
+/// AVIF can also be turned into thumbnails by the `image` crate (AVIF thumbnails fall
+/// back to the original file).
 pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "jfif", "png", "webp", "gif", "bmp", "avif"];
 
 #[derive(Serialize)]
@@ -19,6 +20,10 @@ pub struct ImageEntry {
     pub size: u64,
     /// Last modified time, in milliseconds since 1970 (what JavaScript's `Date` expects).
     pub modified: u64,
+    /// Size in pixels as displayed (after EXIF rotation); 0 × 0 if it couldn't be read.
+    /// Filled in from the size cache after scanning (see sizes.rs).
+    pub width: u32,
+    pub height: u32,
 }
 
 pub fn is_image(path: &Path) -> bool {
@@ -27,6 +32,8 @@ pub fn is_image(path: &Path) -> bool {
         .is_some_and(|ext| IMAGE_EXTENSIONS.iter().any(|known| ext.eq_ignore_ascii_case(known)))
 }
 
+/// Names starting with "." are hidden on macOS and Linux (and include macOS's "._" copies
+/// on shared drives); names starting with "$" are Windows system folders like $RECYCLE.BIN.
 fn is_hidden(entry: &DirEntry) -> bool {
     entry.file_name().to_str().is_some_and(|name| name.starts_with('.') || name.starts_with('$'))
 }
@@ -52,6 +59,8 @@ pub fn scan(folder: &Path, recursive: bool) -> Vec<ImageEntry> {
                 name: entry.file_name().to_string_lossy().into_owned(),
                 size: meta.len(),
                 modified,
+                width: 0,
+                height: 0,
             })
         })
         .collect()

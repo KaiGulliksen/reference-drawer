@@ -1,6 +1,7 @@
 // The tags of the active workspace, kept in sync with the library database.
 
 import { addTag, deleteTag, getTags, removeTag, renameTag, type Tag, type TagData } from "./api";
+import { pathKey } from "./platform";
 
 /** A tag as listed in the sidebar. */
 export interface TagItem {
@@ -19,7 +20,7 @@ class Tags {
   workspaceId: number | null = null;
   /** Every tag in the workspace, sorted by name. */
   list = $state.raw<Tag[]>([]);
-  /** Tag ids per image, keyed by lower-cased path (Windows paths ignore case). Replaced on every change. */
+  /** Tag ids per image, keyed by `pathKey` (which ignores capitals where the system does). Replaced on every change. */
   private byImage = $state.raw(new Map<string, readonly number[]>());
   readonly names = $derived(new Map(this.list.map((t) => [t.id, t.name])));
 
@@ -41,7 +42,7 @@ class Tags {
   }
 
   idsOf(path: string): readonly number[] {
-    return this.byImage.get(path.toLowerCase()) ?? NO_TAGS;
+    return this.byImage.get(pathKey(path)) ?? NO_TAGS;
   }
 
   namesOf(path: string): string[] {
@@ -59,7 +60,7 @@ class Tags {
       if (!this.list.some((t) => t.id === tag.id)) this.list = [...this.list, tag].sort(byName);
       const map = new Map(this.byImage);
       for (const path of paths) {
-        const key = path.toLowerCase();
+        const key = pathKey(path);
         const ids = map.get(key) ?? NO_TAGS;
         if (!ids.includes(tag.id)) map.set(key, [...ids, tag.id]);
       }
@@ -74,7 +75,7 @@ class Tags {
       if (workspaceId !== this.workspaceId) return;
       const map = new Map(this.byImage);
       for (const path of paths) {
-        const key = path.toLowerCase();
+        const key = pathKey(path);
         const ids = (map.get(key) ?? NO_TAGS).filter((id) => id !== tagId);
         if (ids.length) map.set(key, ids);
         else map.delete(key);
@@ -107,7 +108,7 @@ class Tags {
 
   private apply(data: TagData) {
     this.list = [...data.tags].sort(byName);
-    this.byImage = new Map(data.images.map((i) => [i.path.toLowerCase(), i.tags]));
+    this.byImage = new Map(data.images.map((i) => [pathKey(i.path), i.tags]));
   }
 
   private run(change: (workspaceId: number) => Promise<void>): Promise<void> {

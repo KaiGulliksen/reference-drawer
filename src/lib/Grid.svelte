@@ -1,18 +1,27 @@
 <!--
-  The thumbnail grid. It is "virtualized": only the rows currently on screen
-  (plus a couple above and below) exist in the page, so a folder with 20,000
-  images costs about as much as one with 200.
+  The thumbnail grid, as square tiles in rows or as a masonry layout (see layout.ts).
+  It is "virtualized": only the tiles currently on screen (plus a margin above and
+  below) exist in the page, so a folder with 20,000 images costs about as much as
+  one with 200.
 -->
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { thumbUrl, type ImageEntry } from "./api";
-  import type { TileFit } from "./settings.svelte";
+  import { computeLayout, firstTileFrom, neighbour, PADDING, tileHeight, tilesBetween, tileTop } from "./layout";
+  import { hasOtherModifier, hasPrimaryModifier } from "./platform";
+  import type { GridLayout, TileFit } from "./settings.svelte";
 
   interface Props {
     images: ImageEntry[];
+    mode: GridLayout;
+    /** Target column width, in CSS pixels. */
     tileSize: number;
+    /** How square tiles show their image (the masonry layout always shows the whole image). */
     tileFit: TileFit;
+    /** Show each image's tags, and/or its file name, on the thumbnail. */
+    showTags: boolean;
+    showNames: boolean;
     /** Paths of the selected images. The grid changes this set as you click and use the keyboard. */
     selection: SvelteSet<string>;
     /** Index of the image the keyboard is on (and that Enter opens), or -1. */
@@ -30,8 +39,11 @@
 
   let {
     images,
+    mode,
     tileSize,
     tileFit,
+    showTags,
+    showNames,
     selection,
     focus = $bindable(),
     active,
@@ -66,17 +78,15 @@
   }
 
   function onTileClick(e: MouseEvent, i: number) {
-    const ctrl = e.ctrlKey || e.metaKey;
-    if (e.shiftKey) selectRange(i, ctrl);
-    else if (ctrl) toggle(i);
+    const add = hasPrimaryModifier(e); // Ctrl, or Cmd on a Mac
+    if (e.shiftKey) selectRange(i, add);
+    else if (add) toggle(i);
     else selectOnly(i);
     focus = i;
   }
 
-  const GAP = 6;
-  const PADDING = 12;
-  /** Extra rows rendered above and below the visible area, so fast scrolling doesn't show blanks. */
-  const OVERSCAN_ROWS = 2;
+  /** Extra tiles rendered above and below the visible area (in pixels), so fast scrolling doesn't show blanks. */
+  const OVERSCAN_PX = 500;
 
   let scroller: HTMLDivElement;
   let width = $state(0);
@@ -94,27 +104,10 @@
   /** How long scrolling must calm down before paused tiles load. */
   const SETTLE_MS = 100;
 
-  const columns = $derived(Math.max(1, Math.floor((width - PADDING * 2 + GAP) / (tileSize + GAP))));
-  // Tiles stretch slightly so each row fills the full width.
-  const cell = $derived(Math.max(1, (width - PADDING * 2 - GAP * (columns - 1)) / columns));
-  const rowHeight = $derived(cell + GAP);
-  const rowCount = $derived(Math.ceil(images.length / columns));
-  const totalHeight = $derived(rowCount * rowHeight - GAP + PADDING * 2);
+  const layout = $derived(computeLayout(images, width, tileSize, mode));
+  const visible = $derived(tilesBetween(layout, scrollTop - OVERSCAN_PX, scrollTop + height + OVERSCAN_PX));
 
-  const visible = $derived.by(() => {
-    const first = Math.max(0, Math.floor((scrollTop - PADDING) / rowHeight) - OVERSCAN_ROWS);
-    const last = Math.min(rowCount - 1, Math.floor((scrollTop + height - PADDING) / rowHeight) + OVERSCAN_ROWS);
-    const indices: number[] = [];
-    for (let row = first; row <= last; row++) {
-      for (let col = 0; col < columns; col++) {
-        const i = row * columns + col;
-        if (i < images.length) indices.push(i);
-      }
-    }
-    return indices;
-  });
-
-  /** First image index of the top visible row; used to keep your place when the layout changes. */
+  /** The first image at the top of the view; used to keep your place when the layout changes. */
   let anchor = untrack(() => initialTopIndex);
   /** The last scroll position set by the grid itself (rather than by you scrolling). */
   let ownScrollTop = -1;
@@ -131,7 +124,7 @@
     if (Math.abs(scrollTop - ownScrollTop) < 1) {
       ownScrollTop = -1;
     } else {
-      anchor = Math.floor(Math.max(0, scrollTop - PADDING) / rowHeight) * columns;
+      anchor = firstTileFrom(layout, scrollTop);
     }
 
     const now = performance.now();
@@ -151,11 +144,11 @@
     });
   });
 
-  // When the tile size or window width changes, keep the same images at the top of the view.
-  // (This is also what scrolls to `initialTopIndex` once the grid knows its size.)
+  // When the layout, tile size or window width changes, keep the same images at the top of
+  // the view. (This is also what scrolls to `initialTopIndex` once the grid knows its size.)
   $effect(() => {
     if (width === 0) return; // not laid out yet, so the column count isn't known
-    const top = Math.floor(anchor / columns) * rowHeight;
+    const top = anchor > 0 && anchor < images.length ? Math.max(0, tileTop(layout, anchor) - PADDING) : 0;
     // Wait until the page shows the new layout. Scrolling before the grid has grown to its
     // new height would get cut short.
     tick().then(() => {
@@ -178,20 +171,22 @@
     untrack(() => {
       // Before the grid has a size (just after opening) the restored scroll position wins.
       if (index < 0 || index >= images.length || height === 0) return;
-      const top = PADDING + Math.floor(index / columns) * rowHeight;
+      const top = tileTop(layout, index);
+      const bottom = top + tileHeight(layout, index);
       if (top < scroller.scrollTop) {
         scroller.scrollTop = top - PADDING;
-      } else if (top + cell > scroller.scrollTop + height) {
-        scroller.scrollTop = top + cell - height + PADDING;
+      } else if (bottom > scroller.scrollTop + height) {
+        // Tiles taller than the window are lined up by their top instead.
+        scroller.scrollTop = Math.min(top - PADDING, bottom - height + PADDING);
       }
     });
   });
 
   function onkeydown(e: KeyboardEvent) {
-    if (!active || images.length === 0 || e.altKey || e.metaKey) return;
+    if (!active || images.length === 0 || hasOtherModifier(e)) return;
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
 
-    if (e.ctrlKey) {
+    if (hasPrimaryModifier(e)) {
       if (e.key === "a" || e.key === "A") {
         for (const image of images) selection.add(image.path);
         e.preventDefault();
@@ -204,27 +199,16 @@
       return;
     }
 
-    const rowsPerPage = Math.max(1, Math.floor(height / rowHeight));
     const current = focus < 0 || focus >= images.length ? -1 : focus;
-    let next: number;
-    switch (e.key) {
-      case "ArrowRight": next = current + 1; break;
-      case "ArrowLeft": next = current - 1; break;
-      case "ArrowDown": next = current < 0 ? 0 : current + columns; break;
-      case "ArrowUp": next = current - columns; break;
-      case "PageDown": next = current + columns * rowsPerPage; break;
-      case "PageUp": next = current - columns * rowsPerPage; break;
-      case "Home": next = 0; break;
-      case "End": next = images.length - 1; break;
-      case "Enter":
-        if (current >= 0) onopen(current);
-        e.preventDefault();
-        return;
-      default:
-        return;
+    if (e.key === "Enter") {
+      if (current >= 0) onopen(current);
+      e.preventDefault();
+      return;
     }
+    const moves = ["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End"];
+    if (!moves.includes(e.key)) return;
     e.preventDefault();
-    next = Math.min(images.length - 1, Math.max(0, next));
+    const next = neighbour(layout, current, e.key, height);
     // Shift extends the selection from where it started; plain arrows move a single selection.
     if (e.shiftKey) {
       if (current >= 0 && rangeStart < 0) rangeStart = current;
@@ -239,22 +223,22 @@
 <svelte:window {onkeydown} />
 
 <div class="scroller" bind:this={scroller} bind:clientWidth={width} bind:clientHeight={height} {onscroll}>
-  <div class="canvas" style:height="{totalHeight}px">
+  <div class="canvas" style:height="{layout.totalHeight}px">
     {#each visible as i (images[i].path)}
       {@const image = images[i]}
       {@const tileTags = tagsOf?.(image.path) ?? []}
+      {@const r = layout.rects.subarray(i * 4, i * 4 + 4)}
       <button
         class="tile"
         class:selected={selection.has(image.path)}
         class:focused={i === focus}
-        class:contain={tileFit === "contain"}
-        style:width="{cell}px"
-        style:height="{cell}px"
-        style:transform="translate({PADDING + (i % columns) * (cell + GAP)}px, {PADDING +
-          Math.floor(i / columns) * rowHeight}px)"
+        class:contain={mode === "grid" && tileFit === "contain"}
+        style:width="{r[2]}px"
+        style:height="{r[3]}px"
+        style:transform="translate({r[0]}px, {r[1]}px)"
         title={tileTags.length ? `${image.name}\nTags: ${tileTags.join(", ")}` : image.name}
         onclick={(e) => onTileClick(e, i)}
-        ondblclick={(e) => !e.ctrlKey && !e.shiftKey && onopen(i)}
+        ondblclick={(e) => !hasPrimaryModifier(e) && !e.shiftKey && onopen(i)}
         oncontextmenu={(e) => {
           e.preventDefault();
           // Right-clicking inside the selection keeps it, so a menu action can apply to all of it.
@@ -273,13 +257,20 @@
             <svg viewBox="0 0 12 12" width="11" height="11"><path d="M2.5 6.2l2.3 2.3 4.7-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg>
           </span>
         {/if}
-        {#if tileTags.length}
+        {#if tileTags.length && !showTags}
+          <!-- With tags hidden, a small dot still shows that the image has some. -->
           <span class="tag-dot" aria-hidden="true"></span>
         {/if}
-        <span class="label">
-          {image.name}
-          {#if tileTags.length}<span class="tags">{tileTags.join(" · ")}</span>{/if}
-        </span>
+        {#if showNames || (showTags && tileTags.length)}
+          <span class="overlay">
+            {#if showTags && tileTags.length}
+              <span class="chips">
+                {#each tileTags as tag (tag)}<span class="chip">{tag}</span>{/each}
+              </span>
+            {/if}
+            {#if showNames}<span class="name">{image.name}</span>{/if}
+          </span>
+        {/if}
       </button>
     {/each}
   </div>
@@ -359,34 +350,47 @@
   .tile.contain img {
     object-fit: contain;
   }
-  .label {
+  /* Tags and/or the file name along the bottom of the tile. */
+  .overlay {
     position: absolute;
     left: 0;
     right: 0;
     bottom: 0;
-    padding: 18px 8px 6px;
-    font-size: 12px;
-    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 18px 6px 6px;
     text-align: left;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
-    opacity: 0;
-    transition: opacity 0.12s;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.6));
     pointer-events: none;
   }
-  .tile:hover .label,
-  .tile.focused .label {
-    opacity: 1;
-  }
-  .label .tags {
-    display: block;
-    margin-top: 2px;
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    /* At most two rows of tags; the full list is in the tooltip and the status bar. */
+    max-height: calc(2 * 18px + 3px);
     overflow: hidden;
-    text-overflow: ellipsis;
+  }
+  .chip {
+    padding: 1px 7px;
     font-size: 11px;
-    color: #c8d8ff;
+    line-height: 16px;
+    white-space: nowrap;
+    color: #e8eeff;
+    background: rgba(28, 44, 78, 0.85);
+    border: 1px solid rgba(110, 150, 230, 0.45);
+    border-radius: 999px;
+  }
+  .name {
+    max-width: 100%;
+    padding: 0 2px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 12px;
+    color: #fff;
   }
   .broken {
     display: grid;

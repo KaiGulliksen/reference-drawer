@@ -9,6 +9,9 @@ export interface ImageEntry {
   size: number;
   /** Last modified time in milliseconds since 1970. */
   modified: number;
+  /** Size in pixels as displayed (after EXIF rotation); 0 if it couldn't be read. */
+  width: number;
+  height: number;
 }
 
 export interface ScanResult {
@@ -109,8 +112,4 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-export function folderName(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }

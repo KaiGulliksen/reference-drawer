@@ -136,7 +136,8 @@
   }
 </script>
 
-<div class="backdrop" role="presentation" onpointerdown={onclose}></div>
+<!-- Only ordinary clicks close it here; the mouse's back button is handled by the page. -->
+<div class="backdrop" role="presentation" onpointerdown={(e) => e.button <= 2 && onclose()}></div>
 
 <div class="editor" role="dialog" aria-label="Edit tags">
   <header>

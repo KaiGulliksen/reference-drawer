@@ -11,7 +11,8 @@
   --button-hover: #36363c;
 
   color-scheme: dark;
-  font-family: "Segoe UI", system-ui, sans-serif;
+  /* Each system's own interface font: Segoe UI on Windows, San Francisco on macOS, the desktop font on Linux. */
+  font-family: system-ui, "Segoe UI", -apple-system, "Ubuntu", "Cantarell", "Noto Sans", sans-serif;
   font-size: 14px;
   color: var(--text);
   background: var(--bg);
