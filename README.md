@@ -43,8 +43,18 @@ and the app says *Finder* where it says *Explorer* here.
 
 Workspaces and tags are stored in an SQLite database, `library.db`, in the app's data folder:
 `%APPDATA%\com.kaigulliksen.reflibrary` on Windows, `~/Library/Application Support/com.kaigulliksen.reflibrary`
-on macOS, `~/.local/share/com.kaigulliksen.reflibrary` on Linux. Tags are linked to an image by its path inside the workspace folder, so they survive
-moving the whole folder (use *Change folder…*), but not renaming or moving a single file outside the app.
+on macOS, `~/.local/share/com.kaigulliksen.reflibrary` on Linux. **Tags stay with their images:**
+- Rename an image, or move it to another place inside the workspace's folder (in Explorer, Finder
+  or any other app), and its tags follow it the next time the folder is scanned (opening the
+  workspace, Refresh, or starting the app). The status bar says how many were kept.
+- Editing an image in place keeps its tags too.
+- A *copy* of a tagged image starts untagged, and a deleted image's tags are kept in case the file comes back.
+- Moving the whole folder works too (use *Change folder…*).
+
+How it works: each tagged image gets a "fingerprint" of its contents (its size plus its first and last
+16 KB). When a tagged file disappears and an untagged file with the same fingerprint turns up,
+it's the same image under a new name. Only files of exactly the same size are ever compared, so this
+stays fast. A file that's both renamed *and* edited before the next scan can't be recognised.
 
 Supported formats: JPG, PNG, WebP, GIF, BMP, AVIF.
 
@@ -95,7 +105,10 @@ src/                      the interface (Svelte)
   lib/settings.svelte.ts  remembered preferences
 src-tauri/                the backend (Rust)
   src/lib.rs              app setup, commands, the thumb:// protocol
-  src/library.rs          the library database (workspaces and tags), with its tests
+  src/library.rs          the library database (workspaces and tags), with its tests;
+                          `reconcile` keeps tags with renamed and moved images
+  src/identity.rs         fingerprints of image contents (to recognise renamed files)
+  src/parallel.rs         spreads file work over several threads
   src/scan.rs             finds image files in a folder
   src/sizes.rs            remembers each image's pixel size (for masonry) in a cache
   src/platform.rs         differences between Windows, macOS and Linux

@@ -4,6 +4,7 @@
 //! This is only a cache, kept in the app's cache folder (`sizes.db`). Deleting it is safe:
 //! sizes are read again from the files, which only reads their headers.
 
+use crate::parallel;
 use crate::platform::path_key;
 use crate::scan::ImageEntry;
 use crate::thumbs;
@@ -12,7 +13,6 @@ use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::Mutex;
-use std::thread;
 
 pub struct SizeCache {
     conn: Mutex<Connection>,
@@ -107,28 +107,14 @@ impl SizeCache {
 
 /// Reads the sizes of `images[i]` for each index in `which`, spread over several threads.
 fn read_sizes(images: &[ImageEntry], which: &[usize]) -> Vec<(usize, u32, u32)> {
-    let threads = thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, 8);
-    let chunk = which.len().div_ceil(threads).max(1);
-    thread::scope(|scope| {
-        let workers: Vec<_> = which
-            .chunks(chunk)
-            .map(|part| {
-                scope.spawn(move || {
-                    part.iter()
-                        .map(|&i| {
-                            let path = Path::new(&images[i].path);
-                            // A broken file must never take the scan down, so catch panics too.
-                            let (w, h) = catch_unwind(AssertUnwindSafe(|| thumbs::dimensions(path).ok()))
-                                .ok()
-                                .flatten()
-                                .unwrap_or((0, 0));
-                            (i, w, h)
-                        })
-                        .collect::<Vec<_>>()
-                })
-            })
-            .collect();
-        workers.into_iter().flat_map(|w| w.join().unwrap_or_default()).collect()
+    parallel::map(which, |&i| {
+        let path = Path::new(&images[i].path);
+        // A broken file must never take the scan down, so catch panics too.
+        let (w, h) = catch_unwind(AssertUnwindSafe(|| thumbs::dimensions(path).ok()))
+            .ok()
+            .flatten()
+            .unwrap_or((0, 0));
+        (i, w, h)
     })
 }
 

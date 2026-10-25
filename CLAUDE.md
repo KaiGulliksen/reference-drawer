@@ -50,6 +50,12 @@ switched off while migrating (rebuilding a table would otherwise delete everythi
 and each step is checked with `pragma_foreign_key_check` before it is saved. Add a test for every
 migration that starts from the previous version's data.
 
+Tagged images are identified by location *and* content: `scan_workspace` calls
+`Library::reconcile`, which keeps tags on files still at their location (even if edited) and moves
+the tags of a missing file to an untagged file with the same fingerprint (`identity.rs`). Never
+treat a file as missing just because it wasn't in the scan (e.g. "Subfolders" is off): check that
+it's really gone. Any change to this logic needs tests in `library.rs` (they use real temp files).
+
 ## Commands
 
 ```bash

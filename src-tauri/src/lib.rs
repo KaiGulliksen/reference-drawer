@@ -1,4 +1,6 @@
+mod identity;
 mod library;
+mod parallel;
 mod platform;
 mod pool;
 mod scan;
@@ -30,6 +32,8 @@ const MAX_FALLBACK_BYTES: u64 = 20 * 1024 * 1024;
 struct ScanResult {
     folder: String,
     images: Vec<ImageEntry>,
+    /// How many tagged images were found again under a new name or in a new place.
+    relinked: usize,
 }
 
 #[derive(Serialize)]
@@ -38,32 +42,36 @@ struct ImageSize {
     height: u32,
 }
 
-/// Lists the images in a folder. If `path` is a file, its parent folder is used.
+/// Lists the images in a workspace's folder, and brings its tags up to date with what's there
+/// (so tags follow images that were renamed or moved; see `Library::reconcile`).
 #[tauri::command]
-async fn scan_folder(app: AppHandle, path: String, recursive: bool) -> Result<ScanResult, String> {
-    let mut folder = PathBuf::from(&path);
-    if folder.is_file() {
-        folder = folder.parent().map(PathBuf::from).unwrap_or(folder);
-    }
+async fn scan_workspace(app: AppHandle, library: State<'_, Library>, id: i64) -> Result<ScanResult, String> {
+    let workspace = library.workspace(id)?;
+    let folder = PathBuf::from(&workspace.path);
     if !folder.is_dir() {
-        return Err(format!("Folder not found: {path}"));
+        return Err(format!("Folder not found: {}", workspace.path));
     }
 
     // Allow the webview to load full-size images (and thumbnails) from this folder only.
     app.asset_protocol_scope()
-        .allow_directory(&folder, recursive)
+        .allow_directory(&folder, workspace.recursive)
         .map_err(|e| e.to_string())?;
 
     let to_scan = folder.clone();
-    let images = tauri::async_runtime::spawn_blocking(move || {
-        let mut images = scan::scan(&to_scan, recursive);
+    let (images, relinked) = tauri::async_runtime::spawn_blocking(move || {
+        let mut images = scan::scan(&to_scan, workspace.recursive);
         app.state::<SizeCache>().fill(&mut images);
-        images
+        // A problem here shouldn't stop the images from showing; the tags just stay where they were.
+        let relinked = app.state::<Library>().reconcile(id, &images).unwrap_or_else(|e| {
+            eprintln!("Couldn't update tags after scanning: {e}");
+            0
+        });
+        (images, relinked)
     })
     .await
     .map_err(|e| e.to_string())?;
 
-    Ok(ScanResult { folder: folder.to_string_lossy().into_owned(), images })
+    Ok(ScanResult { folder: folder.to_string_lossy().into_owned(), images, relinked })
 }
 
 #[tauri::command]
@@ -103,12 +111,21 @@ async fn get_tags(library: State<'_, Library>, workspace_id: i64) -> Result<TagD
 
 #[tauri::command]
 async fn add_tag(
+    app: AppHandle,
     library: State<'_, Library>,
     workspace_id: i64,
     paths: Vec<String>,
     name: String,
 ) -> Result<Tag, String> {
-    library.add_tag(workspace_id, &paths, &name)
+    let tag = library.add_tag(workspace_id, &paths, &name)?;
+    // Fingerprint the newly tagged images in the background (it reads a little of each file),
+    // so they're recognised if they're renamed or moved even before the next scan.
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = app.state::<Library>().fingerprint_new(workspace_id, &paths) {
+            eprintln!("Couldn't fingerprint newly tagged images: {e}");
+        }
+    });
+    Ok(tag)
 }
 
 #[tauri::command]
@@ -233,7 +250,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            scan_folder,
+            scan_workspace,
             image_size,
             list_workspaces,
             add_workspace,

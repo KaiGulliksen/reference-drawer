@@ -10,9 +10,13 @@
 //! The file is the same on every system: image locations inside a workspace are
 //! stored with `/` between folders, whatever the system itself uses.
 
-use crate::platform::PATHS_IGNORE_CASE;
+use crate::identity::fingerprint;
+use crate::parallel;
+use crate::platform::{PATHS_IGNORE_CASE, path_key};
+use crate::scan::{ImageEntry, file_stamp};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -74,6 +78,12 @@ const MIGRATIONS: &[&str] = &[
     DROP TABLE images;
     ALTER TABLE images_new RENAME TO images;
     CREATE INDEX images_by_path_any_case ON images (workspace_id, rel_path COLLATE NOCASE);",
+    // 4: remember each tagged image's file size, modified time and a fingerprint of its
+    // contents, so its tags can follow it when the file is renamed or moved (see `reconcile`).
+    "ALTER TABLE images ADD COLUMN size INTEGER;
+    ALTER TABLE images ADD COLUMN modified INTEGER;
+    ALTER TABLE images ADD COLUMN fingerprint TEXT;
+    CREATE INDEX images_by_size ON images (workspace_id, size);",
 ];
 
 /// SQL that compares a stored path with a parameter the way this system compares file names.
@@ -349,7 +359,158 @@ impl Library {
         Ok(())
     }
 
-    fn workspace(&self, id: i64) -> Result<Workspace> {
+    // ---- Keeping tags with their files ----
+
+    /// Brings the library up to date with a fresh scan of a workspace's folder, so tags stay with
+    /// their images. Returns how many tagged images were found again under a new name or location.
+    ///
+    /// - A tagged image still at its location keeps its tags, even if the file was edited; its
+    ///   fingerprint is just updated.
+    /// - A tagged image whose file is gone is "missing". If a file nobody has tagged yet turns up
+    ///   with exactly the same contents, it's the same image renamed or moved: the tags move to it.
+    /// - Missing images keep their tags, so they come back if the file does.
+    ///
+    /// The slow part (reading files) happens without holding the database lock.
+    pub fn reconcile(&self, workspace_id: i64, scanned: &[ImageEntry]) -> Result<usize> {
+        let (folder, tracked) = {
+            let conn = self.conn.lock().unwrap();
+            // Images whose last tag was removed don't need remembering any more.
+            conn.execute(
+                "DELETE FROM images WHERE workspace_id = ?1
+                   AND NOT EXISTS (SELECT 1 FROM image_tags WHERE image_id = images.id)",
+                [workspace_id],
+            )
+            .map_err(err)?;
+            (PathBuf::from(get_workspace(&conn, workspace_id)?.path), tracked_images(&conn, workspace_id)?)
+        };
+        if tracked.is_empty() {
+            return Ok(0);
+        }
+
+        let scanned_by_key: HashMap<String, &ImageEntry> = scanned
+            .iter()
+            .filter_map(|image| relative_path(&folder, &image.path).ok().map(|rel| (path_key(&rel), image)))
+            .collect();
+        let tracked_keys: HashSet<String> = tracked.iter().map(|row| path_key(&row.rel_path)).collect();
+
+        // Tagged images that are where we left them, but new to fingerprinting or changed since.
+        let mut refresh: Vec<(i64, &ImageEntry)> = Vec::new();
+        // Tagged images whose file has gone (not just hidden because "Subfolders" is off).
+        let mut missing: Vec<&TrackedImage> = Vec::new();
+        for row in &tracked {
+            match scanned_by_key.get(&path_key(&row.rel_path)) {
+                Some(image) => {
+                    let unchanged = row.size == Some(image.size as i64) && row.modified == Some(image.modified as i64);
+                    if row.fingerprint.is_none() || !unchanged {
+                        refresh.push((row.id, image));
+                    }
+                }
+                None => {
+                    if row.fingerprint.is_some() && !Path::new(&full_path(&folder, &row.rel_path)).exists() {
+                        missing.push(row);
+                    }
+                }
+            }
+        }
+
+        // Files nobody has tagged yet, of the same size as a missing image: the only ones that can match.
+        let missing_sizes: HashSet<i64> = missing.iter().filter_map(|row| row.size).collect();
+        let candidates: Vec<&ImageEntry> = scanned
+            .iter()
+            .filter(|image| missing_sizes.contains(&(image.size as i64)))
+            .filter(|image| {
+                relative_path(&folder, &image.path).is_ok_and(|rel| !tracked_keys.contains(&path_key(&rel)))
+            })
+            .collect();
+
+        let refreshed = parallel::map(&refresh, |(_, image)| fingerprint(Path::new(&image.path)).ok());
+        let candidate_prints = parallel::map(&candidates, |image| fingerprint(Path::new(&image.path)).ok());
+
+        // Pair each missing image with at most one matching file (and each file with at most one
+        // missing image). With several identical files, prefer one with the same file name.
+        let mut taken = vec![false; candidates.len()];
+        let mut moves: Vec<(i64, &ImageEntry)> = Vec::new();
+        for row in &missing {
+            let matches: Vec<usize> = (0..candidates.len())
+                .filter(|&c| !taken[c] && candidate_prints[c].is_some() && candidate_prints[c] == row.fingerprint)
+                .collect();
+            let old_name = path_key(row.rel_path.rsplit('/').next().unwrap_or(&row.rel_path));
+            let pick = matches
+                .iter()
+                .copied()
+                .find(|&c| path_key(&candidates[c].name) == old_name)
+                .or(matches.first().copied());
+            if let Some(c) = pick {
+                taken[c] = true;
+                moves.push((row.id, candidates[c]));
+            }
+        }
+
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction().map_err(err)?;
+        for ((id, image), print) in refresh.iter().zip(refreshed) {
+            tx.execute(
+                "UPDATE images SET size = ?2, modified = ?3, fingerprint = ?4 WHERE id = ?1",
+                params![id, image.size as i64, image.modified as i64, print],
+            )
+            .map_err(err)?;
+        }
+        let mut relinked = 0;
+        for (id, image) in moves {
+            let rel = relative_path(&folder, &image.path)?;
+            // If the new location got tags of its own meanwhile, leave both alone.
+            let moved = tx.execute(
+                "UPDATE images SET rel_path = ?2, size = ?3, modified = ?4 WHERE id = ?1",
+                params![id, rel, image.size as i64, image.modified as i64],
+            );
+            if moved.is_ok() {
+                relinked += 1;
+            }
+        }
+        tx.commit().map_err(err)?;
+        Ok(relinked)
+    }
+
+    /// Fingerprints newly tagged images, so they can be recognised if they're renamed or moved
+    /// before the next scan. Meant to run in the background after tagging.
+    pub fn fingerprint_new(&self, workspace_id: i64, paths: &[String]) -> Result<()> {
+        let (folder, unprinted) = {
+            let conn = self.conn.lock().unwrap();
+            let folder = PathBuf::from(get_workspace(&conn, workspace_id)?.path);
+            let unprinted: HashSet<String> = tracked_images(&conn, workspace_id)?
+                .into_iter()
+                .filter(|row| row.fingerprint.is_none())
+                .map(|row| path_key(&row.rel_path))
+                .collect();
+            (folder, unprinted)
+        };
+        let todo: Vec<(&String, String)> = paths
+            .iter()
+            .filter_map(|path| relative_path(&folder, path).ok().map(|rel| (path, rel)))
+            .filter(|(_, rel)| unprinted.contains(&path_key(rel)))
+            .collect();
+        let prints = parallel::map(&todo, |(path, _)| {
+            let stamp = fs::metadata(path).ok().map(|meta| file_stamp(&meta));
+            stamp.zip(fingerprint(Path::new(path)).ok())
+        });
+
+        let conn = self.conn.lock().unwrap();
+        let mut update = conn
+            .prepare(&format!(
+                "UPDATE images SET size = ?3, modified = ?4, fingerprint = ?5
+                 WHERE workspace_id = ?1 AND {} AND fingerprint IS NULL",
+                same_path("rel_path", "?2")
+            ))
+            .map_err(err)?;
+        for ((_, rel), print) in todo.iter().zip(prints) {
+            if let Some(((size, modified), print)) = print {
+                update.execute(params![workspace_id, rel, size as i64, modified as i64, print]).map_err(err)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn workspace(&self, id: i64) -> Result<Workspace> {
         let conn = self.conn.lock().unwrap();
         get_workspace(&conn, id)
     }
@@ -361,6 +522,33 @@ impl Library {
         }
         self.workspace(id)
     }
+}
+
+/// An image the library knows about (because it has, or had, tags).
+struct TrackedImage {
+    id: i64,
+    rel_path: String,
+    size: Option<i64>,
+    modified: Option<i64>,
+    fingerprint: Option<String>,
+}
+
+fn tracked_images(conn: &Connection, workspace_id: i64) -> Result<Vec<TrackedImage>> {
+    let mut stmt = conn
+        .prepare("SELECT id, rel_path, size, modified, fingerprint FROM images WHERE workspace_id = ?1")
+        .map_err(err)?;
+    stmt.query_map([workspace_id], |r| {
+        Ok(TrackedImage {
+            id: r.get(0)?,
+            rel_path: r.get(1)?,
+            size: r.get(2)?,
+            modified: r.get(3)?,
+            fingerprint: r.get(4)?,
+        })
+    })
+    .map_err(err)?
+    .collect::<std::result::Result<_, _>>()
+    .map_err(err)
 }
 
 fn get_workspace(conn: &Connection, id: i64) -> Result<Workspace> {
@@ -656,5 +844,181 @@ mod tests {
         } else {
             assert_eq!(images, 2, "Linux: two different files");
         }
+    }
+
+    // ---- Tags following renamed and moved files ----
+
+    /// Writes a fake image file (only its bytes matter for fingerprints) with distinct contents.
+    fn write_image(folder: &Path, rel: &str, seed: u8) {
+        let file = PathBuf::from(full_path(folder, rel));
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        // Bigger than the two 16 KB samples, so the start and end are both read.
+        let bytes: Vec<u8> = (0..50_000u32).map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed)).collect();
+        fs::write(file, bytes).unwrap();
+    }
+
+    /// Scans the folder like the app does, then reconciles. Returns how many tagged images were relinked.
+    fn rescan(lib: &Library, ws: &Workspace, folder: &Path, recursive: bool) -> usize {
+        let images = crate::scan::scan(folder, recursive);
+        lib.reconcile(ws.id, &images).unwrap()
+    }
+
+    fn tags_at(lib: &Library, ws: &Workspace, folder: &Path, rel: &str) -> Vec<String> {
+        tags_of(&lib.tag_data(ws.id).unwrap(), &path(folder, rel))
+    }
+
+    #[test]
+    fn tags_follow_a_renamed_file() {
+        let (lib, ws, folder) = setup("rename");
+        write_image(&folder, "cat.jpg", 1);
+        write_image(&folder, "dog.jpg", 2);
+        lib.add_tag(ws.id, &[path(&folder, "cat.jpg")], "cat").unwrap();
+        lib.fingerprint_new(ws.id, &[path(&folder, "cat.jpg")]).unwrap();
+
+        fs::rename(full_path(&folder, "cat.jpg"), full_path(&folder, "kitty.jpg")).unwrap();
+        assert_eq!(rescan(&lib, &ws, &folder, false), 1);
+        assert_eq!(tags_at(&lib, &ws, &folder, "kitty.jpg"), ["cat"]);
+        assert_eq!(tags_at(&lib, &ws, &folder, "dog.jpg"), Vec::<String>::new(), "other images untouched");
+        assert_eq!(rescan(&lib, &ws, &folder, false), 0, "nothing more to do the second time");
+    }
+
+    #[test]
+    fn tags_follow_a_file_moved_into_a_subfolder() {
+        let (lib, ws, folder) = setup("move-sub");
+        write_image(&folder, "pose.jpg", 3);
+        lib.add_tag(ws.id, &[path(&folder, "pose.jpg")], "pose").unwrap();
+        rescan(&lib, &ws, &folder, true); // the first scan after tagging fingerprints it
+
+        fs::create_dir_all(folder.join("figures")).unwrap();
+        fs::rename(full_path(&folder, "pose.jpg"), full_path(&folder, "figures/pose 1.jpg")).unwrap();
+        assert_eq!(rescan(&lib, &ws, &folder, true), 1);
+        assert_eq!(tags_at(&lib, &ws, &folder, "figures/pose 1.jpg"), ["pose"]);
+    }
+
+    #[test]
+    fn edited_files_keep_their_tags_and_can_still_be_followed_afterwards() {
+        let (lib, ws, folder) = setup("edit");
+        write_image(&folder, "sketch.jpg", 4);
+        lib.add_tag(ws.id, &[path(&folder, "sketch.jpg")], "sketch").unwrap();
+        rescan(&lib, &ws, &folder, false);
+
+        // Edited in place: different contents, same location. The tags stay.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        write_image(&folder, "sketch.jpg", 99);
+        assert_eq!(rescan(&lib, &ws, &folder, false), 0);
+        assert_eq!(tags_at(&lib, &ws, &folder, "sketch.jpg"), ["sketch"]);
+
+        // Renamed after the edit: still recognised, because the fingerprint was updated.
+        fs::rename(full_path(&folder, "sketch.jpg"), full_path(&folder, "sketch final.jpg")).unwrap();
+        assert_eq!(rescan(&lib, &ws, &folder, false), 1);
+        assert_eq!(tags_at(&lib, &ws, &folder, "sketch final.jpg"), ["sketch"]);
+    }
+
+    #[test]
+    fn a_copy_starts_untagged_because_the_original_is_still_there() {
+        let (lib, ws, folder) = setup("copy");
+        write_image(&folder, "hand.jpg", 5);
+        lib.add_tag(ws.id, &[path(&folder, "hand.jpg")], "hand").unwrap();
+        rescan(&lib, &ws, &folder, false);
+
+        fs::copy(full_path(&folder, "hand.jpg"), full_path(&folder, "hand copy.jpg")).unwrap();
+        assert_eq!(rescan(&lib, &ws, &folder, false), 0);
+        assert_eq!(tags_at(&lib, &ws, &folder, "hand.jpg"), ["hand"]);
+        assert_eq!(tags_at(&lib, &ws, &folder, "hand copy.jpg"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn images_hidden_by_the_subfolders_setting_are_not_treated_as_moved() {
+        // A tagged image in a subfolder, and an identical untagged copy at the top level.
+        let (lib, ws, folder) = setup("hidden");
+        write_image(&folder, "sub/face.jpg", 6);
+        lib.add_tag(ws.id, &[path(&folder, "sub/face.jpg")], "face").unwrap();
+        rescan(&lib, &ws, &folder, true);
+        fs::copy(full_path(&folder, "sub/face.jpg"), full_path(&folder, "face.jpg")).unwrap();
+
+        // With "Subfolders" off the tagged image isn't in the scan, but it hasn't gone anywhere.
+        assert_eq!(rescan(&lib, &ws, &folder, false), 0);
+        assert_eq!(tags_at(&lib, &ws, &folder, "sub/face.jpg"), ["face"]);
+        assert_eq!(tags_at(&lib, &ws, &folder, "face.jpg"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn identical_tagged_files_that_both_move_each_keep_their_own_tags() {
+        let (lib, ws, folder) = setup("twins");
+        write_image(&folder, "a.jpg", 7);
+        fs::copy(full_path(&folder, "a.jpg"), full_path(&folder, "b.jpg")).unwrap();
+        lib.add_tag(ws.id, &[path(&folder, "a.jpg")], "first").unwrap();
+        lib.add_tag(ws.id, &[path(&folder, "b.jpg")], "second").unwrap();
+        rescan(&lib, &ws, &folder, true);
+
+        fs::create_dir_all(folder.join("moved")).unwrap();
+        fs::rename(full_path(&folder, "a.jpg"), full_path(&folder, "moved/a.jpg")).unwrap();
+        fs::rename(full_path(&folder, "b.jpg"), full_path(&folder, "moved/b.jpg")).unwrap();
+        assert_eq!(rescan(&lib, &ws, &folder, true), 2);
+        // Same contents, so the file names decide which is which.
+        assert_eq!(tags_at(&lib, &ws, &folder, "moved/a.jpg"), ["first"]);
+        assert_eq!(tags_at(&lib, &ws, &folder, "moved/b.jpg"), ["second"]);
+    }
+
+    #[test]
+    fn a_deleted_image_keeps_its_tags_until_it_comes_back() {
+        let (lib, ws, folder) = setup("deleted");
+        write_image(&folder, "ref.jpg", 8);
+        lib.add_tag(ws.id, &[path(&folder, "ref.jpg")], "keep").unwrap();
+        rescan(&lib, &ws, &folder, false);
+
+        let backup = folder.parent().unwrap().join("ref backup.jpg");
+        fs::rename(full_path(&folder, "ref.jpg"), &backup).unwrap(); // gone from the workspace
+        assert_eq!(rescan(&lib, &ws, &folder, false), 0);
+        assert_eq!(lib.tag_data(ws.id).unwrap().tags.len(), 1, "the tag is kept");
+
+        fs::copy(&backup, full_path(&folder, "restored.jpg")).unwrap(); // back, under another name
+        assert_eq!(rescan(&lib, &ws, &folder, false), 1);
+        assert_eq!(tags_at(&lib, &ws, &folder, "restored.jpg"), ["keep"]);
+    }
+
+    #[test]
+    fn a_new_image_of_the_same_size_but_different_contents_is_not_mistaken_for_a_moved_one() {
+        let (lib, ws, folder) = setup("lookalike");
+        write_image(&folder, "old.jpg", 9);
+        lib.add_tag(ws.id, &[path(&folder, "old.jpg")], "old").unwrap();
+        rescan(&lib, &ws, &folder, false);
+
+        fs::remove_file(full_path(&folder, "old.jpg")).unwrap();
+        write_image(&folder, "new.jpg", 10); // same size, different bytes
+        assert_eq!(rescan(&lib, &ws, &folder, false), 0);
+        assert_eq!(tags_at(&lib, &ws, &folder, "new.jpg"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn images_tagged_before_fingerprints_existed_get_them_on_the_next_scan() {
+        let (lib, ws, folder) = setup("backfill");
+        write_image(&folder, "early.jpg", 11);
+        lib.add_tag(ws.id, &[path(&folder, "early.jpg")], "early").unwrap(); // no fingerprint yet
+        let unprinted = |lib: &Library| -> i64 {
+            let conn = lib.conn.lock().unwrap();
+            conn.query_row("SELECT COUNT(*) FROM images WHERE fingerprint IS NULL", [], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(unprinted(&lib), 1);
+        rescan(&lib, &ws, &folder, false);
+        assert_eq!(unprinted(&lib), 0);
+    }
+
+    #[test]
+    fn untagged_images_are_forgotten_and_dont_block_a_move() {
+        let (lib, ws, folder) = setup("forgotten");
+        write_image(&folder, "x.jpg", 12);
+        write_image(&folder, "y.jpg", 13);
+        lib.add_tag(ws.id, &[path(&folder, "x.jpg")], "x").unwrap();
+        let y = lib.add_tag(ws.id, &[path(&folder, "y.jpg")], "y").unwrap();
+        rescan(&lib, &ws, &folder, false);
+
+        // y loses its only tag and is deleted; then x is renamed to y's old name.
+        // The library's leftover record for y must not stop x's tags from moving there.
+        lib.remove_tag(ws.id, &[path(&folder, "y.jpg")], y.id).unwrap();
+        fs::remove_file(full_path(&folder, "y.jpg")).unwrap();
+        fs::rename(full_path(&folder, "x.jpg"), full_path(&folder, "y.jpg")).unwrap();
+        assert_eq!(rescan(&lib, &ws, &folder, false), 1);
+        assert_eq!(tags_at(&lib, &ws, &folder, "y.jpg"), ["x"]);
     }
 }

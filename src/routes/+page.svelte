@@ -11,7 +11,7 @@
   import Sidebar from "$lib/Sidebar.svelte";
   import TagEditor from "$lib/TagEditor.svelte";
   import Viewer from "$lib/Viewer.svelte";
-  import { scanFolder, type ImageEntry, type Workspace } from "$lib/api";
+  import { scanWorkspace, type ImageEntry, type Workspace } from "$lib/api";
   import type { MenuRequest } from "$lib/menu";
   import { baseName, fileManagerName, hasOtherModifier, hasPrimaryModifier, primaryKeyLabel, shortcutLabel } from "$lib/platform";
   import { keyLabel, settings, type SortKey } from "$lib/settings.svelte";
@@ -139,10 +139,10 @@
     });
   });
 
-  function showNotice(text: string) {
+  function showNotice(text: string, ms = 2500) {
     notice = text;
     clearTimeout(noticeTimer);
-    noticeTimer = setTimeout(() => (notice = null), 2500);
+    noticeTimer = setTimeout(() => (notice = null), ms);
   }
 
   // ---- Workspaces ----
@@ -181,19 +181,29 @@
     if (activeId !== null) viewState.set(activeId, { topIndex: 0, selected: [...selection], focusPath });
   }
 
-  /** Rescans the active workspace's folder. */
+  /** Rescans the active workspace's folder (which also keeps tags with renamed or moved images). */
   async function refresh() {
     const workspace = active;
     if (!workspace) return;
     const token = ++scanToken; // ignore the result if another scan started meanwhile
     loading = true;
     try {
-      const result = await scanFolder(workspace.path, workspace.recursive);
+      const result = await scanWorkspace(workspace.id);
       if (token !== scanToken) return;
       scanError = null;
       missing.delete(workspace.id);
       if (!sameImages(images, result.images)) images = result.images;
       scanCache.set(workspace.id, result.images);
+      if (result.relinked > 0) {
+        // Some tags moved to their images' new names or places.
+        tags.load(workspace.id).catch((e) => (error = String(e)));
+        showNotice(
+          result.relinked === 1
+            ? "Kept the tags of 1 renamed or moved image."
+            : `Kept the tags of ${result.relinked} renamed or moved images.`,
+          5000,
+        );
+      }
     } catch (e) {
       if (token !== scanToken) return;
       scanError = String(e);

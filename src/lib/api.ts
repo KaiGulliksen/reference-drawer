@@ -15,9 +15,11 @@ export interface ImageEntry {
 }
 
 export interface ScanResult {
-  /** The folder that was actually scanned (the parent folder if a file was given). */
+  /** The folder that was scanned. */
   folder: string;
   images: ImageEntry[];
+  /** How many tagged images were found again under a new name or in a new place (their tags moved with them). */
+  relinked: number;
 }
 
 /** A named folder of images, browsed on its own. Saved in the library database. */
@@ -29,8 +31,9 @@ export interface Workspace {
   recursive: boolean;
 }
 
-export function scanFolder(path: string, recursive: boolean): Promise<ScanResult> {
-  return invoke<ScanResult>("scan_folder", { path, recursive });
+/** Lists the images in a workspace's folder, and keeps tags with images that were renamed or moved. */
+export function scanWorkspace(id: number): Promise<ScanResult> {
+  return invoke<ScanResult>("scan_workspace", { id });
 }
 
 export const listWorkspaces = () => invoke<Workspace[]>("list_workspaces");

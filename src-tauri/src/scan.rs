@@ -1,6 +1,7 @@
 //! Finding the image files inside a folder.
 
 use serde::Serialize;
+use std::fs::Metadata;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 use walkdir::{DirEntry, WalkDir};
@@ -26,6 +27,16 @@ pub struct ImageEntry {
     pub height: u32,
 }
 
+/// A file's size in bytes and last modified time in milliseconds, as stored in `ImageEntry`.
+pub fn file_stamp(meta: &Metadata) -> (u64, u64) {
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_millis() as u64);
+    (meta.len(), modified)
+}
+
 pub fn is_image(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
@@ -48,16 +59,11 @@ pub fn scan(folder: &Path, recursive: bool) -> Vec<ImageEntry> {
         .filter_map(Result::ok)
         .filter(|entry| entry.file_type().is_file() && is_image(entry.path()))
         .filter_map(|entry| {
-            let meta = entry.metadata().ok()?;
-            let modified = meta
-                .modified()
-                .ok()
-                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                .map_or(0, |d| d.as_millis() as u64);
+            let (size, modified) = file_stamp(&entry.metadata().ok()?);
             Some(ImageEntry {
                 path: entry.path().to_string_lossy().into_owned(),
                 name: entry.file_name().to_string_lossy().into_owned(),
-                size: meta.len(),
+                size,
                 modified,
                 width: 0,
                 height: 0,
