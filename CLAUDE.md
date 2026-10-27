@@ -1,35 +1,81 @@
 # Reference Library
 
-A lightweight desktop app for browsing and tagging folders of reference images.
-Tauri 2 (Rust backend in `src-tauri/`) + Svelte 5 / SvelteKit (interface in `src/`). See README.md
-for features and the code layout.
+A lightweight desktop app for collecting, browsing, tagging and arranging reference images
+(art inspiration, interiors, …). Tauri 2 (Rust backend in `src-tauri/`) + Svelte 5 / SvelteKit as a
+single-page app (interface in `src/`). README.md has the features, how to use them, and the full
+file layout.
 
-The owner has basic coding skills but a good grasp of concepts: explain changes in plain language,
-and keep code commented the way it is now.
+The owner has basic coding skills but a good grasp of concepts: explain changes and decisions in
+plain language, say what was tested and how, and keep code commented the way it is now (comments
+explain *why*, in plain English, at the level of the surrounding code).
 
 ## Goals that shape every change
 
 - **Lightweight.** Low memory and CPU use matter more than features. Measure (Task Manager's
-  "private working set") when a change could affect it.
+  "private working set", see Testing) when a change could affect it.
 - **Cross-platform.** The app ships on Windows today but must stay buildable and correct on macOS
   and Linux. Every change has to work on all three (rules below).
+- **The user's files are sacred.** The app never moves, renames, edits or deletes image files or
+  folders. Removing a workspace, tag, board or board item only touches the library database.
+
+## How it fits together
+
+- **Workspaces** are folders, browsed separately. `scan_workspace` (Rust) walks the folder, fills in
+  each image's pixel size from the size cache (`sizes.rs`), runs `Library::reconcile` (tags and board
+  items follow renamed files), and allows the folder in the asset-protocol scope so the web view
+  may load its files. Nothing outside a workspace folder is ever served.
+- **Getting images on screen**, from cheapest to most expensive:
+  - grid thumbnails: `thumb://…?s=400` (`thumbs.rs`), made once and cached on disk, generated on a
+    newest-first worker pool (`pool.rs`) so on-screen tiles go first;
+  - viewer/board previews: `thumb://…?s=1920|2560|3840` (screen-sized; small images and GIFs are
+    served as the original);
+  - originals: Tauri's asset protocol (`convertFileSrc`), only when zoomed in past the preview's detail.
+  Build URLs with the helpers in `src/lib/api.ts`, never by hand.
+- **Data lives in three places:**
+  - the library database (`library.db`, app data folder): workspaces, tags, boards; real data, with
+    migrations and tests;
+  - caches (app cache folder): thumbnails and `sizes.db`; safe to delete, rebuilt on demand;
+  - `localStorage` (`settings.svelte.ts`): per-device UI preferences only (layout, tile size, tag
+    shortcut, last workspace). Never put library data there.
+- **Interface state:** `src/routes/+page.svelte` owns the page state (active workspace or board,
+  selection, filter, which overlay is open) and wires the components together. Shared lists live in
+  small stores (`workspaces/tags/boards.svelte.ts`) that call the backend and update locally.
+- **Layering:** the grid or a board is underneath; the viewer, tag editor, Settings and menus open on
+  top. Each underlying component gets an `active` prop that is false while something is on top, so
+  keys go to the top layer only. `goBack()` (Esc-like, also the mouse back button) closes the top
+  layer first: menu → tag editor → Settings → viewer → board.
+
+## Keeping it lightweight (don't undo these)
+
+- The grid is virtualized: only on-screen tiles exist (`Grid.svelte` + `layout.ts`), and tiles that
+  only flash past during fast scrolling never request a thumbnail.
+- Big lists are `$state.raw` and replaced, not edited in place. Derive per-image lookups with maps
+  keyed by `pathKey`.
+- Never put originals in the grid. In the viewer and on boards, pick the smallest source that's sharp
+  enough and drop the bigger one again when it's no longer needed.
+- Reading many files (headers, fingerprints) goes through `parallel::map`; don't hold the database
+  lock while reading files (see `reconcile`: read, compute without the lock, then write).
+- Prefer a few kilobytes of extra code over a new dependency; check bundle and memory impact before
+  adding one.
 
 ## Cross-platform rules
 
 - **Platform differences live in one place:** `src/lib/platform.ts` on the interface side, and
-  clearly named constants / `cfg!(target_os = …)` in Rust. Don't scatter OS checks around.
-- **Shortcuts:** use `hasPrimaryModifier(e)` (Cmd on macOS, Ctrl elsewhere), never `e.ctrlKey`
-  directly. On macOS Ctrl+click means right-click. Show shortcuts with `shortcutLabel()` /
-  `primaryKeyLabel`, never a hard-coded "Ctrl".
+  `src-tauri/src/platform.rs` (or clearly named `cfg!(target_os = …)` constants) in Rust. Don't
+  scatter OS checks around.
+- **Shortcuts:** use `hasPrimaryModifier(e)` / `hasOtherModifier(e)` (Cmd on macOS, Ctrl elsewhere),
+  never `e.ctrlKey` directly. On macOS Ctrl+click means right-click. Show shortcuts with
+  `shortcutLabel()` / `primaryKeyLabel`, never a hard-coded "Ctrl".
 - **Wording:** no Windows-only names in the interface; use `fileManagerName` ("Explorer" /
   "Finder" / "file manager").
 - **Paths:** never build or split paths by hand with `\` or `/`. In Rust use `Path`/`PathBuf`.
   Paths stored in the database are relative to the workspace folder and always use `/`
   (`relative_path` / `full_path` in `library.rs`). Paths sent to the interface are written the way
-  the system writes them.
+  the system writes them; `baseName()` in `platform.ts` handles either slash.
 - **Capital letters in file names:** the same file on Windows and macOS, different files on Linux.
-  Compare paths with `same_path()` in SQL and `pathKey()` in the interface; never lower-case paths
-  directly. (Tag names are case-insensitive everywhere; that's a design choice, not a platform one.)
+  Compare paths with `same_path()` in SQL, `path_key()` in Rust and `pathKey()` in the interface;
+  never lower-case paths directly. (Tag names are case-insensitive everywhere; that's a design
+  choice, not a platform one.)
 - **Locations:** use Tauri's path API (`app_data_dir`, `app_cache_dir`), never hard-coded folders
   like `%APPDATA%`.
 - **Web view:** Windows uses WebView2 (Chromium); macOS and Linux use WebKit (Safari's engine).
@@ -40,54 +86,121 @@ and keep code commented the way it is now.
   in tests rather than Windows-style strings.
 - **Checking other platforms:** `.github/workflows/build.yml` builds and tests on Windows, macOS
   and Linux. It only runs when started by hand and uses the owner's GitHub Actions minutes
-  (macOS minutes count 10×), so ask before starting it.
+  (macOS minutes count 10×), so ask before starting it. It has never been run yet.
 
 ## Database
 
-`src-tauri/src/library.rs`. Schema changes are numbered entries in `MIGRATIONS`, only ever added
-at the end; never edit an existing one, since installed copies have already run it. Foreign keys are
-switched off while migrating (rebuilding a table would otherwise delete everything linked to it)
-and each step is checked with `pragma_foreign_key_check` before it is saved. Add a test for every
-migration that starts from the previous version's data.
+`src-tauri/src/library.rs` (workspaces, tags, the shared helpers) and `boards.rs` (mood boards).
+Schema changes are numbered entries in `MIGRATIONS` (5 so far), only ever added at the end; never
+edit an existing one, since installed copies have already run it. Foreign keys are switched off while
+migrating (rebuilding a table would otherwise delete everything linked to it) and each step is
+checked with `pragma_foreign_key_check` before it is saved. Add a test for every migration that
+starts from the previous version's data.
 
 Images get a record in the `images` table when they're tagged or put on a board (`image_record`);
-board items and tags point at that record, so both follow renamed files. `reconcile` only forgets
+tags and board items point at that record, so both follow renamed files. `reconcile` only forgets
 records that are neither tagged nor on a board.
 
-Tagged images are identified by location *and* content: `scan_workspace` calls
-`Library::reconcile`, which keeps tags on files still at their location (even if edited) and moves
-the tags of a missing file to an untagged file with the same fingerprint (`identity.rs`). Never
-treat a file as missing just because it wasn't in the scan (e.g. "Subfolders" is off): check that
-it's really gone. Any change to this logic needs tests in `library.rs` (they use real temp files).
+Images are identified by location *and* content: `reconcile` keeps records on files still at their
+location (even if edited; the fingerprint is refreshed) and moves the record of a missing file to an
+untracked file with the same fingerprint (`identity.rs`: size + first/last 16 KB). Never treat a file
+as missing just because it wasn't in the scan (e.g. "Subfolders" is off): check that it's really gone.
+Any change to this logic needs tests in `library.rs` (they use real temp files).
+
+## Backend conventions (Rust / Tauri)
+
+- Commands are `async fn` returning `Result<_, String>` with user-readable error text, registered in
+  `generate_handler!` in `lib.rs`. Blocking file work goes in `tauri::async_runtime::spawn_blocking`.
+- Anything the interface calls that isn't a plain command needs a permission in
+  `src-tauri/capabilities/default.json` (currently: window title, open/ask dialogs, reveal in folder).
+  Grant the narrowest permission that works.
+- A broken image file must never crash the app: catch panics around decoding (`catch_unwind`) and
+  fall back gracefully, as `thumb_protocol` and `sizes.rs` do.
+- `cargo build` should produce no warnings.
+
+## Interface conventions (Svelte 5)
+
+- Runes only (`$state`, `$derived`, `$effect`, `$props`, `{@attach}`); use `untrack` inside effects
+  that write state, and function bindings (`bind:x={() => get, (v) => set}`) where a child edits
+  state the page keeps by path.
+- `npm run check` must report 0 errors and 0 warnings.
+- Colours and sizes come from the CSS variables in `src/app.css` (dark theme).
+- Right-click menus: build `MenuItem[]` (`src/lib/menu.ts`) and set the page's `menu`; one shared
+  `ContextMenu` renders it. Menus open only on left/right clicks; backdrops ignore mouse buttons 3/4
+  so the back button is handled once, by the page.
+- Destructive actions confirm first with the dialog plugin's `ask()`, and the text says what is and
+  isn't affected ("The images themselves are not touched").
+- Keyboard shortcuts: check `RESERVED_KEYS` in `settings.svelte.ts` before adding a key, and add new
+  single-key shortcuts there, so the user can't pick it as the tag shortcut.
+- Dragging inside the app (tiles onto a board) uses plain pointer events, not HTML5 drag-and-drop:
+  Tauri's "drop files onto the window" handling (used to add workspaces) swallows HTML5 drag events
+  on Windows. Find the drop target with `document.elementFromPoint`.
+- With pointer capture, `click`/`dblclick` targets become the capturing element; find what's under
+  the pointer with `elementFromPoint` instead (see `itemAt` in `Board.svelte`).
 
 ## Commands
 
 ```bash
 npm run check                                            # type-check the interface
-cargo test --manifest-path src-tauri/Cargo.toml --lib    # database tests
+cargo test --manifest-path src-tauri/Cargo.toml --lib    # database, size cache and board tests
 npm run tauri dev                                        # run with live reload
-npm run tauri build                                      # release build + installer
+npm run tauri build                                      # release build + installer (NSIS on Windows)
 ```
 
 Rust is installed through rustup in `%USERPROFILE%\.cargo\bin`; add it to `PATH` in new shells.
+The project path contains a space ("Reference Library"): quote paths in shell commands.
 
-## Testing in the real app without touching the owner's library
+## Testing
 
-The owner uses the installed app, so their real library (`library.db` in the app data folder) and
-settings must never be used by tests.
+Every feature is checked at three levels before it's called done:
 
-- Point the app at a throwaway database: `REFERENCE_LIBRARY_DATA_DIR=<scratch folder>` (the
-  thumbnail and image-size caches then go in `<scratch folder>/cache` too).
+1. **Rust tests** for anything touching the database or files (`cargo test --lib`).
+2. **The real app in dev mode, isolated from the owner's data** (below), driven with real mouse and
+   keyboard input over the Chrome DevTools Protocol, with screenshots looked at, not just DOM checks.
+3. **A smoke test of the release build** (also isolated), including a memory reading.
+
+### Never touch the owner's library
+
+The owner uses the installed app, so their real library, caches and settings must never be used by
+tests.
+
+- `REFERENCE_LIBRARY_DATA_DIR=<scratch folder>` points the app at a throwaway database; the thumbnail
+  and image-size caches then go in `<scratch folder>/cache` too.
 - For release builds also set `WEBVIEW2_USER_DATA_FOLDER=<scratch folder>`: the installed app keeps
   its settings in the same web view storage, and the one-time "last folder → first workspace"
   conversion would otherwise be used up.
-- `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` lets a script drive the
-  window over the Chrome DevTools Protocol (click, type, screenshot, evaluate).
-- The Vite dev server sometimes serves a component's old CSS after edits; reload, or check the
-  release build, before assuming a styling bug.
+- Generated test images and test databases belong in the scratchpad, never in the project.
 
-## Releases
+### Driving the app
 
-Bump the version in `package.json`, `src-tauri/Cargo.toml` and `src-tauri/tauri.conf.json`
-together (then `npm install --package-lock-only`). The owner reviews before anything is committed
-or pushed to GitHub (`KaiGulliksen/reference-library`, private).
+- `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` lets a Node script drive the
+  window over CDP (Node 24 has a global `WebSocket`): `Input.dispatchMouseEvent` /
+  `Input.dispatchKeyEvent` for real input, `Page.captureScreenshot`, `Runtime.evaluate`.
+- CDP input coordinates are CSS pixels; screenshots are device pixels (×1.25 on this machine).
+  Measure positions with `getBoundingClientRect()`, not from screenshots.
+- A synthetic Enter must include `text: "\r"`, or focused buttons won't activate.
+- The app's native confirm dialogs can be answered with PowerShell `WScript.Shell`
+  (`AppActivate("<dialog title>")` + `SendKeys`). A real mouse back button can be sent with
+  user32 `mouse_event` (XBUTTON1).
+- `Emulation.setDeviceMetricsOverride` doesn't resize WebView2; to test narrow layouts, set the width
+  of `.app` from script instead.
+- `Runtime.evaluate` doesn't allow top-level `await` in object literals; wrap in an async function.
+
+### Gotchas
+
+- The Vite dev server sometimes serves a component's old CSS after edits; reload, restart dev, or
+  check the release build before assuming a styling bug.
+- Memory: report Task Manager's figure (per-process "private working set" from
+  `Win32_PerfFormattedData_PerfProc_Process`), not `PrivateMemorySize64`, which overstates the GPU
+  process badly. The GPU process cache varies a lot between runs (≈60–250 MB); the Rust process is
+  typically under 15 MB. A release build with a large workspace open sits around 125–160 MB.
+- `python` on this machine is the Windows Store stub and waits for input; use Node for scripts.
+
+## Releases and Git
+
+- Each feature becomes a minor version. Bump `package.json`, `src-tauri/Cargo.toml` and
+  `src-tauri/tauri.conf.json` together, then `npm install --package-lock-only` to update the lock file.
+- Update README.md (how to use it, file layout) and this file when something they describe changes.
+- The owner approves every commit and push to GitHub (`KaiGulliksen/reference-library`, private,
+  branch `main`). Commit messages: a short summary line with the version, then a plain-language
+  list of what changed.
