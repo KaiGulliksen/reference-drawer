@@ -169,7 +169,7 @@
           {:else}
             <button
               class="item"
-              title="{workspace.path}{shortcutHint(i)}"
+              title="{workspace.path}{workspace.id === activeId ? '' : '\nDrag images here to move them'}{shortcutHint(i)}"
               aria-current={workspace.id === activeId ? "page" : undefined}
               onclick={() => onselect(workspace.id)}
               ondblclick={() => (renamingId = workspace.id)}

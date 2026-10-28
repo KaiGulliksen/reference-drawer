@@ -1,12 +1,13 @@
 //! Saving images that are dragged into the app from elsewhere (a web browser, another app, a
 //! file manager) into a workspace's folder.
 //!
-//! This is the only place the app creates files, and it only ever adds new ones: a name that's
-//! taken gets " (2)", " (3)", … added, and an image that's already in the folder isn't saved a
-//! second time. Nothing that's already there is ever replaced.
+//! This is the only place the app creates files (moving.rs moves them, using the same naming),
+//! and it only ever adds new ones: a name that's taken gets " (2)", " (3)", … added, and an image
+//! that's already in the folder isn't saved a second time. Nothing that's already there is ever
+//! replaced.
 
 use crate::scan;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -158,27 +159,37 @@ fn is_reserved_name(stem: &str) -> bool {
 }
 
 /// Writes a new file "stem.ext", or "stem (2).ext", "stem (3).ext", … if that's taken.
-/// `create_new` makes the system refuse to open a file that already exists, so even a file
-/// that appears at the same moment is never overwritten.
 fn create_new(folder: &Path, stem: &str, extension: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    let (path, mut file) = new_file(folder, stem, extension, |_| false)?;
+    if let Err(e) = file.write_all(bytes) {
+        // Don't leave half an image behind. This is the file just made here, nothing else.
+        drop(file);
+        let _ = fs::remove_file(&path);
+        return Err(e);
+    }
+    Ok(path)
+}
+
+/// Makes a new, empty file "stem.ext" in `folder`, or "stem (2).ext", "stem (3).ext", … if that
+/// name is taken on disk or `avoid` says so. `create_new` makes the system refuse to open a file
+/// that already exists, so even a file that appears at the same moment is never overwritten.
+pub(crate) fn new_file(
+    folder: &Path,
+    stem: &str,
+    extension: &str,
+    avoid: impl Fn(&Path) -> bool,
+) -> std::io::Result<(PathBuf, File)> {
     for n in 1..=10_000 {
         let name = if n == 1 { format!("{stem}.{extension}") } else { format!("{stem} ({n}).{extension}") };
         let path = folder.join(name);
-        if path.exists() {
+        if path.exists() || avoid(&path) {
             continue; // includes a folder of that name
         }
-        let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(file) => file,
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => return Ok((path, file)),
             Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e),
-        };
-        if let Err(e) = file.write_all(bytes) {
-            // Don't leave half an image behind. This is the file just made here, nothing else.
-            drop(file);
-            let _ = fs::remove_file(&path);
-            return Err(e);
         }
-        return Ok(path);
     }
     Err(std::io::Error::other("too many files with the same name"))
 }

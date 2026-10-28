@@ -4,7 +4,7 @@
 //! so they take no extra disk space and follow renamed or moved files the same way tags do.
 
 use crate::library::{
-    Library, Result, check_color, err, full_path, get_workspace, image_record, now, relative_path,
+    Library, Result, check_color, err, full_path, get_workspace, image_record, now, relative_path, same_path,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -262,6 +262,39 @@ impl Library {
         Ok(())
     }
 
+    /// The boards (names, in sidebar order) that moving these images to another workspace would
+    /// take them off: boards only hold images from their own workspace (see `moved_to_workspace`).
+    /// None if the other workspace's folder is inside this one's, as the images then stay here too.
+    pub fn boards_left_by_move(&self, from_id: i64, to_id: i64, paths: &[String]) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let from = PathBuf::from(get_workspace(&conn, from_id)?.path);
+        let to = get_workspace(&conn, to_id)?.path;
+        if relative_path(&from, &to).is_ok() {
+            return Ok(Vec::new());
+        }
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT b.id, b.name, b.position FROM board_items bi
+                 JOIN boards b ON b.id = bi.board_id
+                 JOIN images i ON i.id = bi.image_id
+                 WHERE i.workspace_id = ?1 AND {}",
+                same_path("i.rel_path", "?2")
+            ))
+            .map_err(err)?;
+        let mut found: Vec<(i64, i64, String)> = Vec::new();
+        for path in paths {
+            let rows = stmt
+                .query_map(params![from_id, relative_path(&from, path)?], |r| Ok((r.get(2)?, r.get(0)?, r.get(1)?)))
+                .map_err(err)?;
+            for row in rows {
+                found.push(row.map_err(err)?);
+            }
+        }
+        found.sort();
+        found.dedup();
+        Ok(found.into_iter().map(|(_, _, name)| name).collect())
+    }
+
     pub fn set_board_view(&self, board_id: i64, view: BoardView) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -398,6 +431,41 @@ mod tests {
         assert_eq!(lib.reconcile(ws, &crate::scan::scan(&folder, false)).unwrap(), 1);
         let item = &lib.board_data(board.id).unwrap().items[0];
         assert_eq!(item.path.as_deref(), Some(folder.join("renamed.jpg").to_str().unwrap()));
+    }
+
+    #[test]
+    fn images_moved_to_another_workspace_leave_this_ones_boards() {
+        let (lib, ws, folder) = setup("move");
+        let home_dir = folder.parent().unwrap().join("Home");
+        fs::create_dir_all(folder.join("sub")).unwrap();
+        fs::create_dir_all(&home_dir).unwrap();
+        let home = lib.add_workspace(home_dir.to_str().unwrap()).unwrap().id;
+        let sub = lib.add_workspace(folder.join("sub").to_str().unwrap()).unwrap().id;
+        let (a, b) = (write_image(&folder, "a.jpg", 5), write_image(&folder, "b.jpg", 6));
+        let poses = lib.create_board(ws, "Poses").unwrap();
+        let hands = lib.create_board(ws, "Hands").unwrap();
+        lib.create_board(ws, "Empty").unwrap();
+        lib.add_board_images(hands.id, &[at(&a, 0.0)]).unwrap();
+        lib.add_board_images(poses.id, &[at(&a, 0.0), at(&b, 320.0)]).unwrap();
+
+        let both = [a.clone(), b.clone()];
+        assert_eq!(lib.boards_left_by_move(ws, home, &both).unwrap(), ["Poses", "Hands"], "in sidebar order, once each");
+        assert!(lib.boards_left_by_move(ws, sub, &both).unwrap().is_empty(), "a folder inside: they stay here too");
+
+        // Into the workspace inside this one: still on the boards, at the new place.
+        let in_sub = full_path(&folder, "sub/a.jpg");
+        fs::rename(&a, &in_sub).unwrap();
+        lib.moved_to_workspace(ws, sub, &[(a.clone(), in_sub.clone())]).unwrap();
+        assert_eq!(lib.board_data(hands.id).unwrap().items[0].path.as_deref(), Some(in_sub.as_str()));
+
+        // To another workspace: off the boards, and the board counts follow.
+        let in_home = full_path(&home_dir, "a.jpg");
+        fs::rename(&in_sub, &in_home).unwrap();
+        lib.moved_to_workspace(ws, home, &[(in_sub.clone(), in_home)]).unwrap();
+        assert!(lib.board_data(hands.id).unwrap().items.is_empty());
+        let left = lib.board_data(poses.id).unwrap();
+        assert_eq!(left.board.image_count, 1);
+        assert_eq!(left.items[0].path.as_deref(), Some(b.as_str()), "the image that stayed is still there");
     }
 
     #[test]

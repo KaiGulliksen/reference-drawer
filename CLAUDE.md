@@ -15,18 +15,31 @@ explain *why*, in plain English, at the level of the surrounding code).
   "private working set", see Testing) when a change could affect it.
 - **Cross-platform.** The app ships on Windows today but must stay buildable and correct on macOS
   and Linux. Every change has to work on all three (rules below).
-- **The user's files are sacred.** The app never moves, renames, edits or deletes image files or
-  folders. Removing a workspace, tag, board or board item only touches the library database.
-  The only files it creates are images dragged onto the window (`import.rs`): always a new file
-  (`create_new`, " (2)" when the name is taken), never replacing one, and not at all if the same
-  image is already in the workspace.
+- **The user's files are sacred.** The app never renames, edits, replaces or deletes image files
+  or folders. Removing a workspace, tag, board or board item only touches the library database.
+  It changes folders in exactly two ways, both asked for by the user:
+  - images dragged onto the window are saved as new files (`import.rs`): never replacing one
+    (`new_file`, " (2)" when the name is taken), and not at all if the same image is already in
+    the workspace;
+  - *Move to workspace* moves image files into another workspace's folder (`moving.rs`): the name
+    is claimed with `new_file` first, so nothing is ever replaced; across drives it copies, checks
+    the copy, and only then removes the original. Only images inside the source workspace's folder
+    are ever moved.
 
 ## How it fits together
 
 - **Workspaces** are folders, browsed separately. `scan_workspace` (Rust) walks the folder, fills in
   each image's pixel size from the size cache (`sizes.rs`), runs `Library::reconcile` (tags and board
   items follow renamed files), and allows the folder in the asset-protocol scope so the web view
-  may load its files. Nothing outside a workspace folder is ever served.
+  may load its files. Nothing outside a workspace folder is ever served. It also starts watching
+  that folder (`watch.rs`, the `notify` crate; one folder at a time, the last one scanned): after
+  a quiet moment the backend emits `folder-changed`, and the page rescans if it's the open
+  workspace. So whatever the page shows is rescanned on its own; don't add polling.
+- **Moving images between workspaces:** `move_images` (lib.rs) moves the files (`moving.rs`), then
+  `Library::moved_to_workspace` brings the tags along by name (creating missing tags in the target)
+  and drops the old records, which takes the images off the old workspace's boards; boards only
+  hold images from their own workspace. `boards_left_by_move` lets the page ask first. If the
+  target folder is inside the source folder, the image stays in the source workspace too.
 - **Getting images on screen**, from cheapest to most expensive:
   - grid thumbnails: `thumb://…?s=400` (`thumbs.rs`), made once and cached on disk, generated on a
     newest-first worker pool (`pool.rs`) so on-screen tiles go first;
@@ -183,9 +196,10 @@ tests.
 
 - `REFERENCE_LIBRARY_DATA_DIR=<scratch folder>` points the app at a throwaway database; the thumbnail
   and image-size caches then go in `<scratch folder>/cache` too.
-- For release builds also set `WEBVIEW2_USER_DATA_FOLDER=<scratch folder>`: the installed app keeps
-  its settings in the same web view storage, and the one-time "last folder → first workspace"
-  conversion would otherwise be used up.
+- Also set `WEBVIEW2_USER_DATA_FOLDER=<scratch folder>/webview`, for dev and release builds: the
+  installed app keeps its settings in the same web view storage (the one-time "last folder → first
+  workspace" conversion would otherwise be used up), and while the installed app is running, a
+  test build with different browser arguments fails to start at all (WebView2 error 0x8007139F).
 - Generated test images and test databases belong in the scratchpad, never in the project.
 
 ### Driving the app

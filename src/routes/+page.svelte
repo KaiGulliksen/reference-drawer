@@ -13,7 +13,10 @@
   import Viewer from "$lib/Viewer.svelte";
   import {
     addBoardImages,
+    boardsLeftByMove,
     getBoard,
+    moveImages,
+    onFolderChanged,
     scanWorkspace,
     type Board,
     type ImageEntry,
@@ -72,6 +75,8 @@
   let renamingBoardId = $state<number | null>(null);
   /** The board in the sidebar that images are being dragged over. */
   let dropBoardId = $state<number | null>(null);
+  /** The other workspace in the sidebar that images from the grid are being dragged over (to move them there). */
+  let moveTargetId = $state<number | null>(null);
 
   // Tag filter: show only images with all of these tags, or only untagged images.
   const filterTags = new SvelteSet<number>();
@@ -245,7 +250,14 @@
       if (token !== scanToken) return;
       scanError = null;
       missing.delete(workspace.id);
-      if (!sameImages(images, result.images)) images = result.images;
+      if (!sameImages(images, result.images)) {
+        // The viewer goes by position in the grid's list; keep it on the same image when images
+        // are added or removed around it (e.g. the folder changed while you're looking).
+        const viewed = viewing !== null && viewerList === null ? filtered[viewing]?.path : undefined;
+        images = result.images;
+        const index = viewed ? filtered.findIndex((i) => i.path === viewed) : -1;
+        if (index >= 0) viewing = index;
+      }
       scanCache.set(workspace.id, result.images);
       if (result.relinked > 0) {
         // Some tags moved to their images' new names or places.
@@ -568,6 +580,74 @@
     }
   }
 
+  // ---- Moving images to another workspace ----
+  // The files themselves move into the other workspace's folder; their tags go with them.
+
+  async function moveToWorkspace(paths: string[], to: Workspace) {
+    const from = active;
+    if (!from || paths.length === 0 || to.id === from.id) return;
+    const them = paths.length === 1 ? "it" : "them";
+    try {
+      // Boards only hold images from their own workspace, so ask before taking images off any.
+      const onBoards = await boardsLeftByMove(from.id, to.id, paths);
+      if (onBoards.length > 0) {
+        const names = onBoards.map((name) => `“${name}”`).join(", ");
+        const confirmed = await ask(
+          `${paths.length === 1 ? "This image is" : "Some of these images are"} on ${onBoards.length === 1 ? "the board" : "the boards"} ${names} in “${from.name}”. Boards only hold images from their own workspace, so moving ${them} to “${to.name}” takes ${them} off.\n\nThe ${paths.length === 1 ? "image and its tags move" : "images and their tags move"} either way; nothing is deleted.`,
+          { title: "Move to another workspace", kind: "warning", okLabel: "Move", cancelLabel: "Cancel" },
+        );
+        if (!confirmed) return;
+      }
+
+      showNotice(paths.length === 1 ? "Moving the image…" : `Moving ${paths.length} images…`, 120_000);
+      const result = await moveImages(from.id, to.id, paths);
+      scanCache.delete(to.id); // rescanned when it's opened next
+      if (from.id === activeId) {
+        await refresh();
+        // Tags and board counts changed with the images that left.
+        tags.load(from.id).catch((e) => (error = String(e)));
+        boards.refresh().catch((e) => (error = String(e)));
+      }
+
+      const parts: string[] = [];
+      if (result.moved.length > 0) parts.push(`Moved ${plural(result.moved.length, "image")} to “${to.name}”`);
+      if (result.already > 0) {
+        parts.push(`${plural(result.already, "image")} ${result.already === 1 ? "was" : "were"} already in its folder`);
+      }
+      if (parts.length > 0) showNotice(`${parts.join(" · ")}.`, 6000);
+      else notice = null;
+      if (result.failed.length > 0) {
+        error =
+          result.failed.length === 1
+            ? `Couldn't move ${result.failed[0]}`
+            : `${result.failed.length} images couldn't be moved. ${result.failed[0]}`;
+      }
+    } catch (e) {
+      notice = null;
+      error = String(e);
+    }
+  }
+
+  /** The other workspaces to move images to, as a menu at `x`, `y`. */
+  function showWorkspacePicker(paths: string[], x: number, y: number) {
+    const others = workspaces.list.filter((w) => w.id !== activeId);
+    const items: MenuItem[] = others.map((workspace) => ({
+      label: workspace.name,
+      color: workspace.color,
+      disabled: missing.has(workspace.id),
+      action: () => moveToWorkspace(paths, workspace),
+    }));
+    if (items.length === 0) items.push({ label: "No other workspaces yet (add one with +)", disabled: true, action: () => {} });
+    menu = { x, y, items };
+  }
+
+  /** The workspace (in the sidebar) under the pointer while dragging images, other than the open one. */
+  function otherWorkspaceUnder(x: number, y: number): number | null {
+    const el = document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-workspace-drop]");
+    const id = el ? Number(el.dataset.workspaceDrop) : null;
+    return id === activeId ? null : id;
+  }
+
   // ---- Images and folders dropped onto the window from outside the app ----
   // Images are saved as new files in a workspace's folder: the open one, or the one in the
   // sidebar they're dropped on. Dropped onto a board, they're put on it too. Folders become
@@ -730,6 +810,10 @@
           label: targets.length > 1 ? `Add ${targets.length} to board…` : "Add to board…",
           action: () => showBoardPicker(targets, x, y),
         },
+        {
+          label: targets.length > 1 ? `Move ${targets.length} to workspace…` : "Move to workspace…",
+          action: () => showWorkspacePicker(targets, x, y),
+        },
         "separator",
         { label: `Show in ${fileManagerName}`, action: () => revealItemInDir(image.path) },
       ],
@@ -855,6 +939,13 @@
   onMount(() => {
     init();
 
+    // The open workspace's folder is watched (watch.rs): rescan when images there are added,
+    // removed or renamed, so they show up without pressing Refresh.
+    const stopWatching = onFolderChanged((workspaceId) => {
+      if (workspaceId === activeId) refresh();
+      else scanCache.delete(workspaceId);
+    });
+
     // No browser right-click menu (Back, Reload, …), except in text fields where copy/paste is handy.
     const blockBrowserMenu = (e: MouseEvent) => {
       if (!(e.target instanceof HTMLInputElement)) e.preventDefault();
@@ -901,6 +992,7 @@
     window.addEventListener("drop", ondrop);
 
     return () => {
+      stopWatching.then((stop) => stop());
       document.removeEventListener("contextmenu", blockBrowserMenu);
       window.removeEventListener("dragstart", ondragstart);
       window.removeEventListener("dragend", ondragend);
@@ -1054,7 +1146,7 @@
         {activeBoardId}
         bind:renamingBoardId
         dropBoardId={dropBoardId ?? (dropTarget?.kind === "board" ? dropTarget.id : null)}
-        dropWorkspaceId={dropTarget?.kind === "workspace" ? dropTarget.id : null}
+        dropWorkspaceId={moveTargetId ?? (dropTarget?.kind === "workspace" ? dropTarget.id : null)}
         onboardselect={openBoard}
         onboardadd={newBoard}
         onboardrename={renameBoard}
@@ -1135,11 +1227,17 @@
             tagsOf={(path) => tags.of(path)}
             onopen={(i) => (viewing = i)}
             onitemmenu={showImageMenu}
-            ondragmove={(x, y) => (dropBoardId = boardUnder(x, y))}
+            ondragmove={(x, y) => {
+              dropBoardId = boardUnder(x, y);
+              moveTargetId = otherWorkspaceUnder(x, y);
+            }}
             ondragend={(x, y, paths) => {
-              const target = boardUnder(x, y);
+              const board = boardUnder(x, y);
+              const workspace = workspaces.list.find((w) => w.id === otherWorkspaceUnder(x, y));
               dropBoardId = null;
-              if (paths && target !== null) addImagesToBoard(target, paths);
+              moveTargetId = null;
+              if (paths && board !== null) addImagesToBoard(board, paths);
+              else if (paths && workspace) moveToWorkspace(paths, workspace);
             }}
           />
         {/key}

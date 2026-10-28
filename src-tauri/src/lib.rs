@@ -2,24 +2,27 @@ mod boards;
 mod identity;
 mod import;
 mod library;
+mod moving;
 mod parallel;
 mod platform;
 mod pool;
 mod scan;
 mod sizes;
 mod thumbs;
+mod watch;
 
 use boards::{Board, BoardData, BoardItem, BoardView, NewImage};
-use library::{Library, Tag, TagData, Workspace};
+use library::{Library, Tag, TagData, Workspace, relative_path};
 use pool::WorkerPool;
 use scan::ImageEntry;
 use serde::Serialize;
 use sizes::SizeCache;
 use std::fs;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::http::{Request, Response, StatusCode, header};
 use tauri::{AppHandle, Manager, State, UriSchemeContext, UriSchemeResponder, Wry};
+use watch::FolderWatch;
 
 /// Set this to use a different folder for the library database and caches, e.g. a throwaway one for testing.
 const DATA_DIR_ENV: &str = "REFERENCE_LIBRARY_DATA_DIR";
@@ -70,6 +73,9 @@ async fn scan_workspace(app: AppHandle, library: State<'_, Library>, id: i64) ->
 
     let to_scan = folder.clone();
     let (images, relinked) = tauri::async_runtime::spawn_blocking(move || {
+        // Watch the folder from now on, so later changes show up by themselves (see watch.rs).
+        // Started before scanning, so nothing that changes during the scan is missed.
+        app.state::<FolderWatch>().watch(&app, id, &to_scan, workspace.recursive);
         let mut images = scan::scan(&to_scan, workspace.recursive);
         app.state::<SizeCache>().fill(&mut images);
         // A problem here shouldn't stop the images from showing; the tags just stay where they were.
@@ -295,6 +301,83 @@ async fn save_dropped(app: AppHandle, workspace_id: i64, name: String, bytes: Ve
     Ok(Imported { path: saved.path.to_string_lossy().into_owned(), already: saved.already })
 }
 
+/// What happened when images were moved to another workspace.
+#[derive(Serialize)]
+struct MoveResult {
+    /// Where the moved images are now.
+    moved: Vec<String>,
+    /// How many were already in the other workspace's folder, so stayed where they were.
+    already: usize,
+    /// What went wrong with the ones that couldn't be moved (they're still where they were).
+    failed: Vec<String>,
+}
+
+/// The boards moving these images to another workspace would take them off (see
+/// `Library::boards_left_by_move`), so the interface can ask first.
+#[tauri::command]
+async fn boards_left_by_move(
+    library: State<'_, Library>,
+    from_workspace_id: i64,
+    to_workspace_id: i64,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
+    library.boards_left_by_move(from_workspace_id, to_workspace_id, &paths)
+}
+
+/// Moves image files from one workspace's folder into another's (at its top level), and takes
+/// their tags along (see moving.rs and `Library::moved_to_workspace`).
+#[tauri::command]
+async fn move_images(
+    app: AppHandle,
+    from_workspace_id: i64,
+    to_workspace_id: i64,
+    paths: Vec<String>,
+) -> Result<MoveResult, String> {
+    if from_workspace_id == to_workspace_id {
+        return Err("Those images are already in that workspace.".into());
+    }
+    let library = app.state::<Library>();
+    let from = PathBuf::from(library.workspace(from_workspace_id)?.path);
+    let to = library.workspace(to_workspace_id)?;
+    let to_folder = PathBuf::from(&to.path);
+    if !to_folder.is_dir() {
+        return Err(format!("Folder not found: {}", to.path));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let library = app.state::<Library>();
+        let avoid = library.known_paths(to_workspace_id)?;
+        let mut moves = Vec::new();
+        let mut already = 0;
+        let mut failed = Vec::new();
+        for path in paths {
+            let name = file_name_of(&path);
+            // Only ever images from the workspace being moved from, never any other file.
+            if relative_path(&from, &path).is_err() {
+                failed.push(format!("{name}: it isn't in this workspace's folder."));
+                continue;
+            }
+            match moving::move_file(Path::new(&path), &to_folder, |p| avoid.contains(&platform::path_key(&p.to_string_lossy()))) {
+                Ok(Some(new)) => moves.push((path, new.to_string_lossy().into_owned())),
+                Ok(None) => already += 1,
+                Err(e) => failed.push(format!("{name}: {e}")),
+            }
+        }
+        // The files have moved by now; if the library can't be updated, say so, but the images
+        // are still fine (their tags just stay behind).
+        if let Err(e) = library.moved_to_workspace(from_workspace_id, to_workspace_id, &moves) {
+            failed.push(format!("The images were moved, but their tags couldn't go with them: {e}"));
+        }
+        Ok(MoveResult { moved: moves.into_iter().map(|(_, new)| new).collect(), already, failed })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The file name at the end of a path, for messages.
+fn file_name_of(path: &str) -> String {
+    Path::new(path).file_name().map_or_else(|| path.to_owned(), |name| name.to_string_lossy().into_owned())
+}
+
 /// The real width and height of an image (after EXIF rotation), without decoding it.
 #[tauri::command]
 async fn image_size(app: AppHandle, path: String) -> Result<ImageSize, String> {
@@ -378,6 +461,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(WorkerPool::new(workers))
+        .manage(FolderWatch::default())
         .register_asynchronous_uri_scheme_protocol("thumb", thumb_protocol)
         .setup(|app| {
             // With DATA_DIR_ENV set (for testing), the caches go in that folder too, so a test
@@ -423,6 +507,8 @@ pub fn run() {
             set_board_view,
             import_image,
             import_image_url,
+            boards_left_by_move,
+            move_images,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

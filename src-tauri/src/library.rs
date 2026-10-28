@@ -4,8 +4,8 @@
 //! `%APPDATA%\com.kaigulliksen.reflibrary`, on macOS
 //! `~/Library/Application Support/com.kaigulliksen.reflibrary`, on Linux
 //! `~/.local/share/com.kaigulliksen.reflibrary`).
-//! Only the library's own information lives here; image files are never
-//! moved, copied or changed.
+//! Only the library's own information lives here; nothing in this file touches
+//! image files (moving.rs moves them when asked, then `moved_to_workspace` follows).
 //!
 //! The file is the same on every system: image locations inside a workspace are
 //! stored with `/` between folders, whatever the system itself uses.
@@ -565,6 +565,106 @@ impl Library {
         Ok(())
     }
 
+    // ---- Moving images to another workspace ----
+
+    /// Full paths (as `path_key`s) of every image the library has a record for in a workspace,
+    /// including ones whose file is missing. Images moved there avoid these names, so they don't
+    /// pick up the tags of a missing image that once had the same name.
+    pub fn known_paths(&self, workspace_id: i64) -> Result<HashSet<String>> {
+        let conn = self.conn.lock().unwrap();
+        let folder = PathBuf::from(get_workspace(&conn, workspace_id)?.path);
+        Ok(tracked_images(&conn, workspace_id)?
+            .into_iter()
+            .map(|row| path_key(&full_path(&folder, &row.rel_path)))
+            .collect())
+    }
+
+    /// Updates the library after image files were moved from one workspace's folder to another's
+    /// (`moves` holds each image's old and new full path).
+    ///
+    /// - Each image's tags go with it: tags the other workspace doesn't have yet are created there
+    ///   (with their colour), since tags belong to their workspace.
+    /// - Boards only hold images from their own workspace, so a moved image leaves the old
+    ///   workspace's boards. Tags left on no image in the old workspace are deleted, as when a tag
+    ///   is removed from its last image.
+    /// - If the new place is still inside the old workspace's folder (one workspace's folder is
+    ///   inside the other's), the image stays in the old workspace too, with its tags and boards.
+    pub fn moved_to_workspace(&self, from_id: i64, to_id: i64, moves: &[(String, String)]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let from = PathBuf::from(get_workspace(&conn, from_id)?.path);
+        let to = PathBuf::from(get_workspace(&conn, to_id)?.path);
+        let tx = conn.transaction().map_err(err)?;
+        let mut old_tags: HashSet<i64> = HashSet::new();
+        for (old, new) in moves {
+            let record = tx
+                .query_row(
+                    &format!(
+                        "SELECT id, size, modified, fingerprint FROM images WHERE workspace_id = ?1 AND {}",
+                        same_path("rel_path", "?2")
+                    ),
+                    params![from_id, relative_path(&from, old)?],
+                    |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Option<i64>>(1)?, r.get::<_, Option<i64>>(2)?, r.get::<_, Option<String>>(3)?)),
+                )
+                .optional()
+                .map_err(err)?;
+            let Some((id, size, modified, print)) = record else {
+                continue; // neither tagged nor on a board: nothing to bring along
+            };
+
+            let tags: Vec<(i64, String, Option<String>)> = {
+                let mut stmt = tx
+                    .prepare_cached(
+                        "SELECT t.id, t.name, t.color FROM image_tags it JOIN tags t ON t.id = it.tag_id
+                         WHERE it.image_id = ?1",
+                    )
+                    .map_err(err)?;
+                stmt.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                    .map_err(err)?
+                    .collect::<std::result::Result<_, _>>()
+                    .map_err(err)?
+            };
+            if !tags.is_empty() {
+                let new_id = image_record(&tx, to_id, &relative_path(&to, new)?)?;
+                tx.execute(
+                    "UPDATE images SET size = ?2, modified = ?3, fingerprint = ?4 WHERE id = ?1",
+                    params![new_id, size, modified, print],
+                )
+                .map_err(err)?;
+                for (old_tag, name, color) in tags {
+                    old_tags.insert(old_tag);
+                    // Tag names ignore capitals, so an existing "Hands" there is used for "hands".
+                    tx.execute(
+                        "INSERT OR IGNORE INTO tags (workspace_id, name, color, created_at) VALUES (?1, ?2, ?3, ?4)",
+                        params![to_id, name, color, now()],
+                    )
+                    .map_err(err)?;
+                    tx.execute(
+                        "INSERT OR IGNORE INTO image_tags (image_id, tag_id)
+                         SELECT ?1, id FROM tags WHERE workspace_id = ?2 AND name = ?3",
+                        params![new_id, to_id, name],
+                    )
+                    .map_err(err)?;
+                }
+            }
+
+            match relative_path(&from, new) {
+                Ok(rel) => tx.execute("UPDATE images SET rel_path = ?2 WHERE id = ?1", params![id, rel]),
+                // Also takes it off the old workspace's boards, and its tags there (by the
+                // database's own links, ON DELETE CASCADE).
+                Err(_) => tx.execute("DELETE FROM images WHERE id = ?1", [id]),
+            }
+            .map_err(err)?;
+        }
+        for tag in old_tags {
+            tx.execute(
+                "DELETE FROM tags WHERE id = ?1 AND NOT EXISTS (SELECT 1 FROM image_tags WHERE tag_id = ?1)",
+                [tag],
+            )
+            .map_err(err)?;
+        }
+        tx.commit().map_err(err)
+    }
+
     pub fn workspace(&self, id: i64) -> Result<Workspace> {
         let conn = self.conn.lock().unwrap();
         get_workspace(&conn, id)
@@ -840,6 +940,76 @@ mod tests {
             .query_row("SELECT (SELECT COUNT(*) FROM tags) + (SELECT COUNT(*) FROM images)", [], |r| r.get(0))
             .unwrap();
         assert_eq!(leftover, 2, "only Home's tag and image remain");
+    }
+
+    #[test]
+    fn tags_go_with_images_moved_to_another_workspace() {
+        let (lib, art, folder) = setup("to-workspace");
+        let home_dir = folder.parent().unwrap().join("Home");
+        fs::create_dir_all(&home_dir).unwrap();
+        let home = lib.add_workspace(home_dir.to_str().unwrap()).unwrap();
+
+        let (a, b) = (path(&folder, "sub/a.jpg"), path(&folder, "b.jpg"));
+        fs::write(&a, vec![1u8; 50_000]).unwrap();
+        fs::write(&b, vec![2u8; 50_000]).unwrap();
+        let hands = lib.add_tag(art.id, &[a.clone()], "hands").unwrap();
+        lib.set_tag_color(art.id, hands.id, Some("red")).unwrap();
+        lib.add_tag(art.id, &[a.clone(), b.clone()], "pose").unwrap();
+        lib.fingerprint_new(art.id, &[a.clone(), b.clone()]).unwrap();
+        // Home already has a "Hands" tag (in blue), and remembers a tagged "a.jpg" whose file is gone.
+        let kitchen = path(&home_dir, "kitchen.jpg");
+        let home_hands = lib.add_tag(home.id, &[kitchen.clone()], "Hands").unwrap();
+        lib.set_tag_color(home.id, home_hands.id, Some("blue")).unwrap();
+        lib.add_tag(home.id, &[path(&home_dir, "a.jpg")], "old").unwrap();
+
+        // What the move command does: move the file (avoiding names the library knows), then the tags.
+        let known = lib.known_paths(home.id).unwrap();
+        let moved = crate::moving::move_file(Path::new(&a), &home_dir, |p| known.contains(&path_key(&p.to_string_lossy())))
+            .unwrap()
+            .unwrap();
+        let moved = moved.to_string_lossy().into_owned();
+        assert_eq!(moved, path(&home_dir, "a (2).jpg"), "doesn't take the missing image's name (and tags)");
+        lib.moved_to_workspace(art.id, home.id, &[(a.clone(), moved.clone())]).unwrap();
+
+        let home_data = lib.tag_data(home.id).unwrap();
+        assert_eq!(tags_of(&home_data, &moved), ["Hands", "pose"], "the existing tag is reused, whatever its capitals");
+        let colour = |name: &str| home_data.tags.iter().find(|t| t.name == name).unwrap().color.clone();
+        assert_eq!(colour("Hands").as_deref(), Some("blue"), "an existing tag keeps its own colour");
+        assert_eq!(colour("pose"), None);
+        assert_eq!(tags_of(&home_data, &path(&home_dir, "a.jpg")), ["old"], "the missing image keeps its tags");
+
+        let art_data = lib.tag_data(art.id).unwrap();
+        assert_eq!(art_data.tags.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["pose"], "an unused tag goes");
+        assert_eq!(tags_of(&art_data, &b), ["pose"], "images that stayed keep their tags");
+        assert_eq!(art_data.images.len(), 1);
+
+        // Scanning both folders afterwards changes nothing, and the moved image keeps its fingerprint,
+        // so it's still followed if it's renamed later.
+        assert_eq!(lib.reconcile(art.id, &crate::scan::scan(&folder, true)).unwrap(), 0);
+        fs::rename(&moved, home_dir.join("renamed.jpg")).unwrap();
+        assert_eq!(lib.reconcile(home.id, &crate::scan::scan(&home_dir, true)).unwrap(), 1);
+        assert_eq!(tags_of(&lib.tag_data(home.id).unwrap(), &path(&home_dir, "renamed.jpg")), ["Hands", "pose"]);
+
+        // Moving it back brings the tag colour along to a workspace that no longer has the tag.
+        let back = path(&folder, "renamed.jpg");
+        fs::rename(home_dir.join("renamed.jpg"), &back).unwrap();
+        lib.moved_to_workspace(home.id, art.id, &[(path(&home_dir, "renamed.jpg"), back.clone())]).unwrap();
+        let art_data = lib.tag_data(art.id).unwrap();
+        assert_eq!(tags_of(&art_data, &back), ["Hands", "pose"]);
+        assert_eq!(art_data.tags.iter().find(|t| t.name == "Hands").unwrap().color.as_deref(), Some("blue"));
+    }
+
+    #[test]
+    fn moving_into_a_workspace_inside_this_one_keeps_the_image_here_too() {
+        let (lib, art, folder) = setup("to-nested-workspace");
+        let sub = lib.add_workspace(folder.join("sub").to_str().unwrap()).unwrap();
+        let (a, moved) = (path(&folder, "a.jpg"), path(&folder, "sub/a.jpg"));
+        fs::write(&a, b"a").unwrap();
+        lib.add_tag(art.id, &[a.clone()], "hands").unwrap();
+        fs::rename(&a, &moved).unwrap();
+        lib.moved_to_workspace(art.id, sub.id, &[(a.clone(), moved.clone())]).unwrap();
+        assert_eq!(tags_of(&lib.tag_data(art.id).unwrap(), &moved), ["hands"], "still in Art (with Subfolders on)");
+        assert_eq!(tags_of(&lib.tag_data(sub.id).unwrap(), &moved), ["hands"]);
     }
 
     #[test]

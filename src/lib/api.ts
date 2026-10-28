@@ -1,6 +1,7 @@
 // Everything the frontend needs from the Rust side of the app.
 
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 export interface ImageEntry {
   path: string;
@@ -147,6 +148,40 @@ export function importImage(workspaceId: number, name: string, bytes: Uint8Array
 /** Downloads an image from a web address and saves it in a workspace's folder, like `importImage`. */
 export const importImageUrl = (workspaceId: number, url: string) =>
   invoke<Imported>("import_image_url", { workspaceId, url });
+
+// ---- Moving images to another workspace ----
+
+export interface MoveResult {
+  /** Where the moved images are now. */
+  moved: string[];
+  /** How many were already in the other workspace's folder (so stayed where they were). */
+  already: number;
+  /** What went wrong with the ones that couldn't be moved (they're still where they were). */
+  failed: string[];
+}
+
+/** The names of the boards that moving these images to another workspace would take them off. */
+export const boardsLeftByMove = (fromWorkspaceId: number, toWorkspaceId: number, paths: string[]) =>
+  invoke<string[]>("boards_left_by_move", { fromWorkspaceId, toWorkspaceId, paths });
+
+/**
+ * Moves image files into another workspace's folder (at its top level), taking their tags along.
+ * Never replaces a file: a name that's taken gets " (2)" added.
+ */
+export const moveImages = (fromWorkspaceId: number, toWorkspaceId: number, paths: string[]) =>
+  invoke<MoveResult>("move_images", { fromWorkspaceId, toWorkspaceId, paths });
+
+// ---- Watching the open workspace's folder ----
+
+/** Must match FOLDER_CHANGED_EVENT in watch.rs. */
+const FOLDER_CHANGED_EVENT = "folder-changed";
+
+/**
+ * Calls `handler` with a workspace's id when images in its folder were added, removed or renamed
+ * (the folder of the workspace last scanned is watched). Resolves to a function that stops listening.
+ */
+export const onFolderChanged = (handler: (workspaceId: number) => void) =>
+  listen<number>(FOLDER_CHANGED_EVENT, (event) => handler(event.payload));
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

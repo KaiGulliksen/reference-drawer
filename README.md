@@ -51,6 +51,16 @@ and the app says *Finder* where it says *Explorer* here.
   - When the browser only hands over the image's web address, the app downloads it. Some
     websites don't allow that; then save the image from the browser and drag the file in.
   - While a tag filter is on, new images get those tags, so they stay in view.
+- **Move images to another workspace:** right-click → *Move to workspace…*, or drag selected tiles
+  onto another workspace in the sidebar. The files really move, into the top level of that
+  workspace's folder.
+  - Their tags go with them (a tag the other workspace doesn't have yet is created there).
+  - A name that's taken in the other folder gets " (2)" added; nothing is ever replaced.
+  - Boards belong to their workspace, so a moved image leaves the old workspace's boards. The app
+    asks first when that would happen.
+- **The open workspace updates by itself:** images added, removed or renamed in its folder (in
+  Explorer, by a browser's downloads, …) show up within a second. *Refresh* is still there for
+  network drives, where the system may not report changes.
 - **Subfolders** includes images in folders inside the workspace's folder.
 - **Mood boards** gather the references for one piece in a single place (in the sidebar, under the
   workspaces; each board belongs to its workspace).
@@ -72,8 +82,8 @@ Workspaces and tags are stored in an SQLite database, `library.db`, in the app's
 `%APPDATA%\com.kaigulliksen.reflibrary` on Windows, `~/Library/Application Support/com.kaigulliksen.reflibrary`
 on macOS, `~/.local/share/com.kaigulliksen.reflibrary` on Linux. **Tags stay with their images:**
 - Rename an image, or move it to another place inside the workspace's folder (in Explorer, Finder
-  or any other app), and its tags follow it the next time the folder is scanned (opening the
-  workspace, Refresh, or starting the app). The status bar says how many were kept.
+  or any other app), and its tags follow it when the folder is next scanned (straight away for
+  the open workspace, otherwise when you open it). The status bar says how many were kept.
 - Editing an image in place keeps its tags too.
 - A *copy* of a tagged image starts untagged, and a deleted image's tags are kept in case the file comes back.
 - Moving the whole folder works too (use *Change folder…*).
@@ -142,6 +152,8 @@ src-tauri/                the backend (Rust)
                           `reconcile` keeps tags with renamed and moved images
   src/identity.rs         fingerprints of image contents (to recognise renamed files)
   src/import.rs           saves images dragged in from other apps (and downloads web addresses)
+  src/moving.rs           moves image files to another workspace's folder (never replacing anything)
+  src/watch.rs            watches the open workspace's folder, so changes show up by themselves
   src/parallel.rs         spreads file work over several threads
   src/scan.rs             finds image files in a folder
   src/sizes.rs            remembers each image's pixel size (for masonry) in a cache
@@ -164,6 +176,9 @@ src-tauri/                the backend (Rust)
   of your screen (~10 MB of memory instead of ~100 MB). The original only loads when you zoom in
   past the preview's detail, and is released again when you zoom back out.
 - **Thumbnails pause while you scroll fast**, so tiles that only flash past aren't generated.
+
+- **The folder is watched, not polled.** The system reports changes to the open workspace's folder,
+  so watching costs nothing while it stays the same, and a burst of changes means one rescan.
 
 - **Image sizes are read from file headers once**, then cached (`sizes.db` in the cache folder),
   so the masonry layout costs almost nothing after the first scan of a folder.
