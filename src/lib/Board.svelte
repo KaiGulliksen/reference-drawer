@@ -553,6 +553,13 @@
     }
   }
 
+  /** The board position under a point on screen (e.g. where something was dropped), or null if it's outside the board. */
+  export function boardPointAt(clientX: number, clientY: number): { x: number; y: number } | null {
+    const r = stage.getBoundingClientRect();
+    if (clientX < r.left || clientX > r.right || clientY < r.top || clientY > r.bottom) return null;
+    return toBoard(clientX - r.left, clientY - r.top);
+  }
+
   /** Paths of the selected images (for tagging them). */
   export function selectedPaths(): string[] {
     return selectedItems.filter((i) => i.path !== null && !isMissing(i.path)).map((i) => i.path!);

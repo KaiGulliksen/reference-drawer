@@ -17,6 +17,9 @@ explain *why*, in plain English, at the level of the surrounding code).
   and Linux. Every change has to work on all three (rules below).
 - **The user's files are sacred.** The app never moves, renames, edits or deletes image files or
   folders. Removing a workspace, tag, board or board item only touches the library database.
+  The only files it creates are images dragged onto the window (`import.rs`): always a new file
+  (`create_new`, " (2)" when the name is taken), never replacing one, and not at all if the same
+  image is already in the workspace.
 
 ## How it fits together
 
@@ -37,6 +40,14 @@ explain *why*, in plain English, at the level of the surrounding code).
   - caches (app cache folder): thumbnails and `sizes.db`; safe to delete, rebuilt on demand;
   - `localStorage` (`settings.svelte.ts`): per-device UI preferences only (layout, tile size, tag
     shortcut, last workspace). Never put library data there.
+- **Drops from other apps** (browser images, files, folders) are handled by the web view itself:
+  Tauri's own drop handling is off (`dragDropEnabled: false` in `tauri.conf.json`) because it only
+  understands files on disk and ignores images dragged out of a browser. `drop.ts` reads the drop
+  (the picture itself when the source hands it over, else its web address, which `import.rs`
+  downloads with `ureq`); `+page.svelte` decides where it goes (open workspace, a workspace or
+  board in the sidebar, or the open board at the drop point). Web pages aren't told where dropped
+  folders are, so folder → workspace only works on Windows, via WebView2's
+  `postMessageWithAdditionalObjects` (`platform.ts` / `platform.rs`).
 - **Interface state:** `src/routes/+page.svelte` owns the page state (active workspace or board,
   selection, filter, which overlay is open) and wires the components together. Shared lists live in
   small stores (`workspaces/tags/boards.svelte.ts`) that call the backend and update locally.
@@ -111,6 +122,8 @@ Any change to this logic needs tests in `library.rs` (they use real temp files).
 
 - Commands are `async fn` returning `Result<_, String>` with user-readable error text, registered in
   `generate_handler!` in `lib.rs`. Blocking file work goes in `tauri::async_runtime::spawn_blocking`.
+- Send file contents to a command as a raw body (`invoke(cmd, bytes, { headers })`, read with
+  `tauri::ipc::Request`), not as a JSON array of numbers; see `import_image`.
 - Anything the interface calls that isn't a plain command needs a permission in
   `src-tauri/capabilities/default.json` (currently: window title, open/ask dialogs, reveal in folder).
   Grant the narrowest permission that works.
@@ -133,8 +146,9 @@ Any change to this logic needs tests in `library.rs` (they use real temp files).
 - Keyboard shortcuts: check `RESERVED_KEYS` in `settings.svelte.ts` before adding a key, and add new
   single-key shortcuts there, so the user can't pick it as the tag shortcut.
 - Dragging inside the app (tiles onto a board) uses plain pointer events, not HTML5 drag-and-drop:
-  Tauri's "drop files onto the window" handling (used to add workspaces) swallows HTML5 drag events
-  on Windows. Find the drop target with `document.elementFromPoint`.
+  HTML5 drag events on the window mean "something dropped in from another app" (see Drops above),
+  and the page ignores HTML5 drags that start inside it. Find the drop target with
+  `document.elementFromPoint` (`data-workspace-drop` / `data-board-drop` mark sidebar targets).
 - With pointer capture, `click`/`dblclick` targets become the capturing element; find what's under
   the pointer with `elementFromPoint` instead (see `itemAt` in `Board.svelte`).
 
@@ -185,6 +199,13 @@ tests.
 - `Emulation.setDeviceMetricsOverride` doesn't resize WebView2; to test narrow layouts, set the width
   of `.app` from script instead.
 - `Runtime.evaluate` doesn't allow top-level `await` in object literals; wrap in an async function.
+- Drops: CDP `Input.dispatchDragEvent` with `items` (e.g. `text/uri-list`, `text/html`) tests the
+  app's drop logic; its `files` option gives files the page can't read. For what browsers and
+  Explorer really hand over, do real drags with user32 `SetCursorPos` + `mouse_event` (run
+  inline in PowerShell; `-ExecutionPolicy Bypass` gets blocked). Use Edge with `--inprivate`:
+  a fresh profile signs in to the owner's Microsoft account and blocks the page with a sync notice.
+  Find Explorer items with UI Automation (`BoundingRectangle`). Serve test pages from a local Node
+  server in the scratchpad.
 
 ### Gotchas
 

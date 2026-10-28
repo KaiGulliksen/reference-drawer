@@ -114,6 +114,30 @@ export function imageSize(path: string): Promise<{ width: number; height: number
   return invoke("image_size", { path });
 }
 
+// ---- Images dropped onto the window ----
+
+/** Where a dropped image was saved. `already`: the same image was in the workspace, so nothing new was saved. */
+export interface Imported {
+  path: string;
+  already: boolean;
+}
+
+/**
+ * Saves a dropped image (its contents) as a new file in a workspace's folder, named after `name`.
+ * Never replaces a file; an image that's already there isn't saved twice.
+ */
+export function importImage(workspaceId: number, name: string, bytes: Uint8Array): Promise<Imported> {
+  // Sent as raw bytes (a JSON list of numbers would be several times bigger). Headers only take
+  // plain ASCII, hence the encoding.
+  return invoke<Imported>("import_image", bytes, {
+    headers: { "workspace-id": String(workspaceId), "file-name": encodeURIComponent(name) },
+  });
+}
+
+/** Downloads an image from a web address and saves it in a workspace's folder, like `importImage`. */
+export const importImageUrl = (workspaceId: number, url: string) =>
+  invoke<Imported>("import_image_url", { workspaceId, url });
+
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;

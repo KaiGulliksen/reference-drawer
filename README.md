@@ -10,8 +10,9 @@ Shortcuts are written for Windows and Linux; on a Mac use **⌘ (Cmd)** wherever
 and the app says *Finder* where it says *Explorer* here.
 
 - **Workspaces** keep separate collections apart, e.g. *Art inspiration* and *Home interiors*.
-  Each one shows the images from its own folder. Add one with **+** in the sidebar (or drag a folder
-  onto the window), switch with a click or **Ctrl+1…9**, and hide the sidebar with **Ctrl+B**.
+  Each one shows the images from its own folder. Add one with **+** in the sidebar (on Windows you
+  can also drag a folder onto the window), switch with a click or **Ctrl+1…9**, and hide the sidebar
+  with **Ctrl+B**.
   - Double-click a workspace to rename it; right-click (or **⋯**) to rename, change its folder,
     show it in Explorer or remove it. Removing a workspace never touches the folder or its images.
   - Each workspace remembers its own *Subfolders* setting, and where you were scrolled to.
@@ -35,6 +36,15 @@ and the app says *Finder* where it says *Explorer* here.
   - ← / → (or A / D) previous / next · F or 0 fit · 1 actual size · + / − zoom
   - **Esc** or the **mouse back button** closes it (the back button also closes menus, the tag
     editor and Settings, one at a time)
+- **Drag images in** from a web browser, another app or Explorer, and they're saved as new files
+  in the open workspace's folder (at the top level, not in a subfolder).
+  - Drop onto another workspace in the sidebar to save there instead, or onto a board (in the
+    sidebar, or the open board itself, where it lands where you let go) to put it on the board too.
+  - The file keeps the image's own name; if that name is taken, " (2)" is added. Nothing is ever
+    replaced, and an image that's already in the workspace isn't saved twice.
+  - When the browser only hands over the image's web address, the app downloads it. Some
+    websites don't allow that; then save the image from the browser and drag the file in.
+  - While a tag filter is on, new images get those tags, so they stay in view.
 - **Subfolders** includes images in folders inside the workspace's folder.
 - **Mood boards** gather the references for one piece in a single place (in the sidebar, under the
   workspaces; each board belongs to its workspace).
@@ -107,6 +117,7 @@ src/                      the interface (Svelte)
   lib/SettingsDialog.svelte  settings (the tag shortcut)
   lib/Board.svelte        a mood board: the free canvas, notes and cropping
   lib/board.ts            board geometry: placing new images, Arrange, Fit
+  lib/drop.ts             reading images and folders dragged onto the window from other apps
   lib/boards.svelte.ts    the open workspace's boards, kept in sync with the database
   lib/ContextMenu.svelte  right-click menus (items defined in lib/menu.ts)
   lib/tags.svelte.ts      the open workspace's tags, kept in sync with the database
@@ -123,10 +134,11 @@ src-tauri/                the backend (Rust)
   src/library.rs          the library database (workspaces and tags), with its tests;
                           `reconcile` keeps tags with renamed and moved images
   src/identity.rs         fingerprints of image contents (to recognise renamed files)
+  src/import.rs           saves images dragged in from other apps (and downloads web addresses)
   src/parallel.rs         spreads file work over several threads
   src/scan.rs             finds image files in a folder
   src/sizes.rs            remembers each image's pixel size (for masonry) in a cache
-  src/platform.rs         differences between Windows, macOS and Linux
+  src/platform.rs         differences between Windows, macOS and Linux (e.g. where dropped folders are)
   src/thumbs.rs           makes thumbnails and viewer previews, keeps the on-disk cache
   src/pool.rs             background workers (newest request first)
   tauri.conf.json         window and app settings

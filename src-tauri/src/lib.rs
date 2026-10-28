@@ -1,5 +1,6 @@
 mod boards;
 mod identity;
+mod import;
 mod library;
 mod parallel;
 mod platform;
@@ -36,6 +37,14 @@ struct ScanResult {
     images: Vec<ImageEntry>,
     /// How many tagged images were found again under a new name or in a new place.
     relinked: usize,
+}
+
+/// Where an image dropped onto the window was saved.
+#[derive(Serialize)]
+struct Imported {
+    path: String,
+    /// True when the same image was already in the workspace, so nothing new was saved.
+    already: bool,
 }
 
 #[derive(Serialize)]
@@ -227,6 +236,44 @@ async fn set_board_view(library: State<'_, Library>, board_id: i64, view: BoardV
     library.set_board_view(board_id, view)
 }
 
+/// Saves an image dropped onto the window into a workspace's folder. The image arrives as the
+/// raw request body (much smaller and faster than a list of numbers in JSON); which workspace,
+/// and the name the image had, come in the request's headers.
+#[tauri::command]
+async fn import_image(app: AppHandle, request: tauri::ipc::Request<'_>) -> Result<Imported, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("No image was received.".into());
+    };
+    let header = |name: &str| request.headers().get(name).and_then(|value| value.to_str().ok());
+    let workspace_id = header("workspace-id").and_then(|id| id.parse().ok()).ok_or("No workspace was given.")?;
+    // Headers can only hold plain ASCII, so the name is percent-encoded.
+    let name = percent_encoding::percent_decode_str(header("file-name").unwrap_or("")).decode_utf8_lossy().into_owned();
+    save_dropped(app, workspace_id, name, bytes.clone()).await
+}
+
+/// Downloads an image that was dropped onto the window as just a web address, and saves it into
+/// a workspace's folder.
+#[tauri::command]
+async fn import_image_url(app: AppHandle, workspace_id: i64, url: String) -> Result<Imported, String> {
+    app.state::<Library>().workspace(workspace_id)?; // don't download for a workspace that's gone
+    let (name, bytes) = tauri::async_runtime::spawn_blocking(move || import::download(&url))
+        .await
+        .map_err(|e| e.to_string())??;
+    save_dropped(app, workspace_id, name, bytes).await
+}
+
+async fn save_dropped(app: AppHandle, workspace_id: i64, name: String, bytes: Vec<u8>) -> Result<Imported, String> {
+    let workspace = app.state::<Library>().workspace(workspace_id)?;
+    let folder = PathBuf::from(&workspace.path);
+    if !folder.is_dir() {
+        return Err(format!("Folder not found: {}", workspace.path));
+    }
+    let saved = tauri::async_runtime::spawn_blocking(move || import::save(&folder, workspace.recursive, &name, &bytes))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(Imported { path: saved.path.to_string_lossy().into_owned(), already: saved.already })
+}
+
 /// The real width and height of an image (after EXIF rotation), without decoding it.
 #[tauri::command]
 async fn image_size(app: AppHandle, path: String) -> Result<ImageSize, String> {
@@ -321,6 +368,9 @@ pub fn run() {
             app.manage(ThumbCacheDir(cache_dir.join("thumbs")));
             app.manage(SizeCache::open(&cache_dir.join("sizes.db"))?);
             app.manage(Library::open(&data_dir.join("library.db"))?);
+            if let Some(window) = app.get_webview_window("main") {
+                platform::watch_dropped_paths(&window)?;
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -347,6 +397,8 @@ pub fn run() {
             update_board_items,
             remove_board_items,
             set_board_view,
+            import_image,
+            import_image_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

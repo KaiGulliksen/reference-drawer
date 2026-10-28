@@ -1,6 +1,8 @@
 // Differences between Windows, macOS and Linux that the interface needs to know about.
 // Keep platform checks in this file so the rest of the app doesn't need to care.
 
+import { listen } from "@tauri-apps/api/event";
+
 const userAgent = typeof navigator === "undefined" ? "" : navigator.userAgent;
 
 export const isMac = /Macintosh|Mac OS X/.test(userAgent);
@@ -45,4 +47,41 @@ export function pathKey(path: string): string {
 /** The last part of a path (a file or folder name), for either kind of slash. */
 export function baseName(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+// ---- Where dropped folders are (Windows only) ----
+// Web pages aren't told where dropped files are on disk. WebView2 (Windows) can tell the app,
+// though: posting a message with the dropped items attached makes the Rust side (platform.rs)
+// send back their paths. macOS and Linux have no such feature, so folders are added with + there.
+
+/** Must match DROPPED_PATHS_MESSAGE and DROPPED_PATHS_EVENT in platform.rs. */
+const DROPPED_PATHS_MESSAGE = "reference-library:dropped-paths";
+const DROPPED_PATHS_EVENT = "dropped-paths";
+
+interface WebView2 {
+  postMessageWithAdditionalObjects(message: string, objects: ArrayLike<File>): void;
+}
+
+const webView2 =
+  typeof window === "undefined" ? undefined : (window as { chrome?: { webview?: WebView2 } }).chrome?.webview;
+
+/** Whether dropping a folder onto the window can add it as a workspace. */
+export const canDropFolders = isWindows && typeof webView2?.postMessageWithAdditionalObjects === "function";
+
+/** The full paths of dropped folders (or files), or an empty list where that can't be found out. */
+export async function droppedPaths(files: File[]): Promise<string[]> {
+  if (!canDropFolders || files.length === 0) return [];
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (paths: string[]) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      stop.then((unlisten) => unlisten());
+      resolve(paths);
+    };
+    const timer = setTimeout(() => finish([]), 3000); // the answer normally takes milliseconds
+    const stop = listen<string[]>(DROPPED_PATHS_EVENT, (event) => finish(event.payload));
+    stop.then(() => webView2!.postMessageWithAdditionalObjects(DROPPED_PATHS_MESSAGE, files));
+  });
 }

@@ -3,7 +3,6 @@
   import { SvelteSet } from "svelte/reactivity";
   import { ask, open } from "@tauri-apps/plugin-dialog";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
-  import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import BoardCanvas from "$lib/Board.svelte";
   import ContextMenu from "$lib/ContextMenu.svelte";
@@ -12,12 +11,23 @@
   import Sidebar from "$lib/Sidebar.svelte";
   import TagEditor from "$lib/TagEditor.svelte";
   import Viewer from "$lib/Viewer.svelte";
-  import { addBoardImages, getBoard, scanWorkspace, type Board, type ImageEntry, type Workspace } from "$lib/api";
-  import { placeNewImages } from "$lib/board";
+  import {
+    addBoardImages,
+    getBoard,
+    scanWorkspace,
+    type Board,
+    type ImageEntry,
+    type Imported,
+    type Workspace,
+  } from "$lib/api";
+  import { placeAt, placeNewImages } from "$lib/board";
+  import { canTake, onlyFiles, readDrop, saveDropped, type Dropped } from "$lib/drop";
   import { boards } from "$lib/boards.svelte";
   import type { MenuItem, MenuRequest } from "$lib/menu";
   import {
     baseName,
+    canDropFolders,
+    droppedPaths,
     fileManagerName,
     hasOtherModifier,
     hasPrimaryModifier,
@@ -67,7 +77,13 @@
   let filterUntagged = $state(false);
   let tagSearch = $state("");
 
-  let dragHover = $state(false);
+  /**
+   * While something is dragged onto the window from outside the app: where it would go.
+   * "main" is the open workspace (or the open board). `onlyFiles`: it could be a folder.
+   */
+  let dropTarget = $state<
+    { kind: "main" | "workspace" | "board"; id: number | null; onlyFiles: boolean } | null
+  >(null);
   let menu = $state<MenuRequest | null>(null);
   /** The tag editor, and the images it is editing (fixed when it opens). */
   let editor = $state<{ paths: string[]; subject: string } | null>(null);
@@ -402,10 +418,13 @@
     }
   }
 
-  /** Puts images on a board, in rows below what's already there. Images already on it are skipped. */
-  async function addImagesToBoard(boardId: number, paths: string[]) {
+  /**
+   * Puts images on a board, in rows below what's already there, or around `at` (a board position).
+   * Images already on it are skipped. Resolves to how many were added.
+   */
+  async function addImagesToBoard(boardId: number, paths: string[], at: { x: number; y: number } | null = null) {
     const board = boards.list.find((b) => b.id === boardId);
-    if (!board || paths.length === 0) return;
+    if (!board || paths.length === 0) return 0;
     try {
       const data = await getBoard(boardId);
       const onBoard = new Set(data.items.filter((i) => i.path !== null).map((i) => pathKey(i.path!)));
@@ -414,12 +433,10 @@
         .filter((image): image is ImageEntry => !!image && !onBoard.has(pathKey(image.path)));
       if (fresh.length === 0) {
         showNotice(paths.length === 1 ? `That image is already on “${board.name}”.` : `Those images are already on “${board.name}”.`);
-        return;
+        return 0;
       }
-      const spots = placeNewImages(
-        data.items,
-        fresh.map((image) => (image.width && image.height ? image.width / image.height : 1)),
-      );
+      const ratios = fresh.map((image) => (image.width && image.height ? image.width / image.height : 1));
+      const spots = at ? placeAt(at, ratios) : placeNewImages(data.items, ratios);
       const added = await addBoardImages(
         boardId,
         fresh.map((image, i) => ({ path: image.path, ...spots[i] })),
@@ -430,8 +447,10 @@
         added.length === 1 ? `Added 1 image to “${board.name}”.` : `Added ${added.length} images to “${board.name}”.`,
         4000,
       );
+      return added.length;
     } catch (e) {
       error = String(e);
+      return 0;
     }
   }
 
@@ -545,6 +564,134 @@
       error = String(e);
     }
   }
+
+  // ---- Images and folders dropped onto the window from outside the app ----
+  // Images are saved as new files in a workspace's folder: the open one, or the one in the
+  // sidebar they're dropped on. Dropped onto a board, they're put on it too. Folders become
+  // workspaces (Windows only, see platform.ts).
+
+  /** Where a drop at this point on screen would go. */
+  function dropTargetAt(x: number, y: number, files: boolean): NonNullable<typeof dropTarget> {
+    const el = document.elementFromPoint(x, y);
+    const workspace = el?.closest<HTMLElement>("[data-workspace-drop]");
+    if (workspace) return { kind: "workspace", id: Number(workspace.dataset.workspaceDrop), onlyFiles: files };
+    const board = el?.closest<HTMLElement>("[data-board-drop]");
+    if (board) return { kind: "board", id: Number(board.dataset.boardDrop), onlyFiles: files };
+    return { kind: "main", id: null, onlyFiles: files };
+  }
+
+  /** What the drop overlay says. */
+  const dropLabel = $derived.by(() => {
+    if (!dropTarget) return "";
+    const folders = dropTarget.onlyFiles && canDropFolders ? " · a folder becomes a workspace" : "";
+    if (dropTarget.kind === "workspace") {
+      const workspace = workspaces.list.find((w) => w.id === dropTarget!.id);
+      return `Save into “${workspace?.name}”${folders}`;
+    }
+    if (dropTarget.kind === "board") {
+      return `Add to “${boards.list.find((b) => b.id === dropTarget!.id)?.name}” (saved in “${active?.name}”)`;
+    }
+    if (!active) return canDropFolders ? "Drop a folder to add it as a workspace" : "Add a workspace first (+ in the sidebar)";
+    if (activeBoard) return `Add to this board (saved in “${active.name}”)`;
+    return `Save into “${active.name}”${folders}`;
+  });
+
+  async function receiveDrop(dropped: Dropped, target: NonNullable<typeof dropTarget>, x: number, y: number) {
+    if (dropped.folders.length > 0) {
+      await addDroppedFolders(dropped.folders);
+      return; // images dropped together with folders are left alone: which workspace would they go to?
+    }
+    if (dropped.images.length === 0) {
+      showNotice("There's no image in what was dropped.", 4000);
+      return;
+    }
+
+    const workspace = target.kind === "workspace" ? workspaces.list.find((w) => w.id === target.id) : active;
+    if (!workspace) {
+      showNotice(
+        canDropFolders
+          ? "Add a workspace first (drop a folder here, or use +): dropped images are saved in its folder."
+          : "Add a workspace first with + in the sidebar: dropped images are saved in its folder.",
+        6000,
+      );
+      return;
+    }
+    // The board to put them on, and where (decided now: the view may move while they're saved).
+    const boardId = target.kind === "board" ? target.id : target.kind === "main" ? activeBoardId : null;
+    const at = boardId !== null && target.kind === "main" ? (boardCanvas?.boardPointAt(x, y) ?? null) : null;
+
+    const count = dropped.images.length;
+    showNotice(count === 1 ? "Saving the image…" : `Saving ${count} images…`, 120_000);
+    const saved: Imported[] = [];
+    const failures: string[] = [];
+    // One at a time, in order: a big drop shouldn't start dozens of downloads at once.
+    for (const image of dropped.images) {
+      try {
+        saved.push(await saveDropped(workspace.id, image));
+      } catch (e) {
+        failures.push(String(e));
+      }
+    }
+    const paths = saved.map((s) => s.path);
+    const fresh = saved.filter((s) => !s.already).map((s) => s.path);
+
+    const parts: string[] = [];
+    if (fresh.length > 0) parts.push(`Saved ${plural(fresh.length, "image")} in “${workspace.name}”`);
+    if (fresh.length < saved.length) {
+      const already = saved.length - fresh.length;
+      parts.push(fresh.length > 0 ? `${already} ${already === 1 ? "was" : "were"} already there` : `${already === 1 ? "It's" : "They're"} already in “${workspace.name}”`);
+    }
+
+    if (workspace.id === activeId) {
+      await refresh();
+      // New images get the tags being filtered on, so they don't vanish from view straight away.
+      if (fresh.length > 0 && filterTags.size > 0) {
+        const names = [...filterTags].map((id) => tags.names.get(id)).filter((name): name is string => !!name);
+        for (const name of names) await tags.add(fresh, name).catch((e) => (error = String(e)));
+        parts.push(`tagged ${names.map((name) => `#${name}`).join(" ")} to match the filter`);
+      }
+      if (boardId !== null) {
+        const added = await addImagesToBoard(boardId, paths, at);
+        const board = boards.list.find((b) => b.id === boardId);
+        if (added > 0 && board) parts.push(`added to “${board.name}”`);
+      } else if (paths.length > 0) {
+        // Select them, so it's easy to see where they went (and to tag them right away).
+        selection.clear();
+        for (const path of paths) if (filtered.some((i) => i.path === path)) selection.add(path);
+        focusPath = paths.find((path) => selection.has(path)) ?? focusPath;
+      }
+    } else {
+      scanCache.delete(workspace.id); // rescanned when it's opened next
+    }
+
+    if (parts.length > 0) showNotice(`${parts.join(" · ")}.`, 6000);
+    else notice = null;
+    if (failures.length > 0) {
+      error = failures.length === 1 ? failures[0] : `${failures.length} of the dropped images couldn't be saved. ${failures[0]}`;
+    }
+  }
+
+  /** Adds dropped folders as workspaces and opens the first, where the system lets the app see where they are. */
+  async function addDroppedFolders(folders: File[]) {
+    if (!canDropFolders) {
+      showNotice("To add a folder as a workspace, use + in the sidebar.", 5000);
+      return;
+    }
+    const paths = await droppedPaths(folders);
+    if (paths.length === 0) {
+      error = "Couldn't tell where the dropped folder is. Add it with + in the sidebar instead.";
+      return;
+    }
+    try {
+      const added = [];
+      for (const path of paths) added.push(await workspaces.add(path));
+      await openWorkspace(added[0].id);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
   // ---- Menus ----
 
@@ -709,20 +856,54 @@
     };
     document.addEventListener("contextmenu", blockBrowserMenu);
 
-    // Dropping a folder (or an image) onto the window adds it as a workspace.
-    const unlisten = getCurrentWebview().onDragDropEvent((event) => {
-      const { type } = event.payload;
-      if (type === "enter" || type === "over") dragHover = true;
-      else if (type === "leave") dragHover = false;
-      else if (type === "drop") {
-        dragHover = false;
-        if (event.payload.paths.length > 0) addWorkspaceFromPath(event.payload.paths[0]);
-      }
-    });
+    // Things dragged onto the window from outside the app (see "Images and folders dropped").
+    // Drags that start inside the app (selected text, say) aren't imports.
+    let dragFromApp = false;
+    let dragWatchdog: ReturnType<typeof setTimeout> | undefined;
+    const isTextField = (target: EventTarget | null) =>
+      target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement;
+    const ondragstart = () => (dragFromApp = true);
+    const ondragend = () => (dragFromApp = false);
+    const ondragover = (e: DragEvent) => {
+      const types = e.dataTransfer?.types ?? [];
+      // Text dragged into a text field is typed there, as usual.
+      if (dragFromApp || !canTake(types) || (isTextField(e.target) && !types.includes("Files"))) return;
+      e.preventDefault(); // accept the drop (and stop the web view from opening the file itself)
+      e.dataTransfer!.dropEffect = "copy";
+      dropTarget = dropTargetAt(e.clientX, e.clientY, onlyFiles(types));
+      // The web view keeps sending "dragover" while something is held over the window; if it
+      // stops without a "dragleave" (that can happen), stop showing the overlay.
+      clearTimeout(dragWatchdog);
+      dragWatchdog = setTimeout(() => (dropTarget = null), 1000);
+    };
+    const ondragleave = (e: DragEvent) => {
+      if (e.relatedTarget === null) dropTarget = null; // left the window (not just moved to another element)
+    };
+    const ondrop = (e: DragEvent) => {
+      const types = e.dataTransfer?.types ?? [];
+      if (dragFromApp || (isTextField(e.target) && !types.includes("Files"))) return;
+      e.preventDefault(); // never let the web view open the dropped file or link itself
+      clearTimeout(dragWatchdog);
+      const target = dropTargetAt(e.clientX, e.clientY, onlyFiles(types));
+      dropTarget = null;
+      if (e.dataTransfer) receiveDrop(readDrop(e.dataTransfer), target, e.clientX, e.clientY);
+    };
+    window.addEventListener("dragstart", ondragstart);
+    window.addEventListener("dragend", ondragend);
+    window.addEventListener("dragenter", ondragover);
+    window.addEventListener("dragover", ondragover);
+    window.addEventListener("dragleave", ondragleave);
+    window.addEventListener("drop", ondrop);
 
     return () => {
       document.removeEventListener("contextmenu", blockBrowserMenu);
-      unlisten.then((fn) => fn());
+      window.removeEventListener("dragstart", ondragstart);
+      window.removeEventListener("dragend", ondragend);
+      window.removeEventListener("dragenter", ondragover);
+      window.removeEventListener("dragover", ondragover);
+      window.removeEventListener("dragleave", ondragleave);
+      window.removeEventListener("drop", ondrop);
+      clearTimeout(dragWatchdog);
     };
   });
 </script>
@@ -743,7 +924,8 @@
       boards={boards.list}
       {activeBoardId}
       bind:renamingBoardId
-      {dropBoardId}
+      dropBoardId={dropBoardId ?? (dropTarget?.kind === "board" ? dropTarget.id : null)}
+      dropWorkspaceId={dropTarget?.kind === "workspace" ? dropTarget.id : null}
       onboardselect={openBoard}
       onboardadd={newBoard}
       onboardrename={renameBoard}
@@ -954,7 +1136,7 @@
           <p>Make a workspace for each collection of references, like <em>Art inspiration</em> or <em>Home interiors</em>.</p>
           <p>Each workspace shows the images from its own folder.</p>
           <button class="primary big" onclick={addWorkspaceFromDialog}>Add a workspace…</button>
-          <p class="hint">…or drag a folder onto this window.</p>
+          {#if canDropFolders}<p class="hint">…or drag a folder onto this window.</p>{/if}
         {:else if scanError}
           <h2>Can't open “{active.name}”</h2>
           <p>The folder may have been moved or renamed, or it's on a drive that isn't connected.</p>
@@ -1002,6 +1184,12 @@
         <span class="dim right">{tagKey} to tag · {primaryKeyLabel}/Shift+click to select several · double-click to view</span>
       {/if}
     </footer>
+
+    {#if dropTarget}
+      <!-- Over the images (or board) it would go to; for a workspace or board in the sidebar,
+           that item lights up instead and only the label shows. -->
+      <div class="drop" class:whole={dropTarget.kind === "main"}><span>{dropLabel}</span></div>
+    {/if}
   </main>
 </div>
 
@@ -1037,9 +1225,6 @@
   <ContextMenu {...menu} onclose={() => (menu = null)} />
 {/if}
 
-{#if dragHover}
-  <div class="drop">Drop a folder to add it as a workspace</div>
-{/if}
 
 <style>
   .app {
@@ -1047,6 +1232,7 @@
     height: 100vh;
   }
   main {
+    position: relative;
     flex: 1;
     min-width: 0;
     display: flex;
@@ -1253,16 +1439,27 @@
   .right {
     margin-left: auto;
   }
+  /* pointer-events: none, so the page can still see what's under the pointer (see dropTargetAt). */
   .drop {
-    position: fixed;
-    inset: 12px;
+    position: absolute;
+    inset: 10px;
     z-index: 20;
     display: grid;
     place-items: center;
-    font-size: 20px;
-    border: 2px dashed var(--accent);
     border-radius: 10px;
-    background: rgba(22, 22, 24, 0.85);
     pointer-events: none;
+  }
+  .drop.whole {
+    border: 2px dashed var(--accent);
+    background: rgba(22, 22, 24, 0.7);
+  }
+  .drop span {
+    max-width: 90%;
+    padding: 10px 18px;
+    font-size: 17px;
+    text-align: center;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
   }
 </style>

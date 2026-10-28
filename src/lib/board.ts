@@ -44,7 +44,7 @@ export function placeNewImages(existing: Rect[], ratios: number[]): Rect[] {
   let x = left;
   let y = area ? area.y + area.height + BOARD_GAP * 3 : 0;
   return ratios.map((ratio) => {
-    const width = NEW_IMAGE_HEIGHT * Math.min(Math.max(ratio || 1, 0.2), 5);
+    const width = newImageWidth(ratio);
     if (x > left && x + width > left + rowWidth) {
       x = left;
       y += NEW_IMAGE_HEIGHT + BOARD_GAP;
@@ -53,6 +53,23 @@ export function placeNewImages(existing: Rect[], ratios: number[]): Rect[] {
     x += width + BOARD_GAP;
     return placed;
   });
+}
+
+/** Places new images in a row centred on `point` (where they were dropped onto the board). */
+export function placeAt(point: { x: number; y: number }, ratios: number[]): Rect[] {
+  const widths = ratios.map(newImageWidth);
+  let x = point.x - (widths.reduce((sum, w) => sum + w, 0) + BOARD_GAP * (widths.length - 1)) / 2;
+  const y = point.y - NEW_IMAGE_HEIGHT / 2;
+  return widths.map((width) => {
+    const placed = { x, y, width, height: NEW_IMAGE_HEIGHT };
+    x += width + BOARD_GAP;
+    return placed;
+  });
+}
+
+/** How wide a new image is, from its shape (width ÷ height); extreme shapes are limited. */
+function newImageWidth(ratio: number): number {
+  return NEW_IMAGE_HEIGHT * Math.min(Math.max(ratio || 1, 0.2), 5);
 }
 
 /**

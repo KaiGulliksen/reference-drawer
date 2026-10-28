@@ -25,6 +25,8 @@
     renamingBoardId: number | null;
     /** The board images are being dragged over, to highlight it as the drop target. */
     dropBoardId: number | null;
+    /** The workspace images from outside the app are being dragged over (they'd be saved in its folder). */
+    dropWorkspaceId: number | null;
     onboardselect: (id: number) => void;
     onboardadd: () => void;
     onboardrename: (id: number, name: string) => void;
@@ -59,6 +61,7 @@
     activeBoardId,
     renamingBoardId = $bindable(),
     dropBoardId,
+    dropWorkspaceId,
     onboardselect,
     onboardadd,
     onboardrename,
@@ -144,7 +147,12 @@
 
     <ul>
       {#each workspaces as workspace, i (workspace.id)}
-        <li class:active={workspace.id === activeId} class:missing={missing.has(workspace.id)}>
+        <li
+          class:active={workspace.id === activeId}
+          class:missing={missing.has(workspace.id)}
+          class:drop-target={workspace.id === dropWorkspaceId}
+          data-workspace-drop={workspace.id}
+        >
           {#if renamingId === workspace.id}
             <input
               class="rename"
@@ -398,7 +406,7 @@
   li.active {
     background: var(--button-hover);
   }
-  /* A board that images are being dragged over. */
+  /* A board or workspace that images are being dragged over. */
   li.drop-target {
     background: #24406e;
     outline: 1px solid var(--accent);

@@ -1,6 +1,6 @@
 [package]
 name = "reference-library"
-version = "0.7.0"
+version = "0.8.0"
 description = "A lightweight viewer for art reference images"
 authors = ["Kai Gulliksen"]
 edition = "2024"
@@ -30,6 +30,15 @@ percent-encoding = "2"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # The library database (workspaces, and tags later). "bundled" builds SQLite into the app.
 rusqlite = { version = "0.41", features = ["bundled"] }
+# Downloads images that are dragged in from a web page as just a link. Only plain HTTPS with
+# built-in certificates: no cookies, compression or other extras, to keep the app small.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+# Windows only: reading where folders dropped onto the window are (see platform.rs).
+# The same versions Tauri already uses, so nothing extra is built into the app.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
 
 # Speed up image decoding in dev builds; the app code itself stays quick to compile.
 [profile.dev.package."*"]
