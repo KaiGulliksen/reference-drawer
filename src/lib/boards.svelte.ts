@@ -1,6 +1,6 @@
 // The boards of the active workspace, kept in sync with the library database.
 
-import { createBoard, deleteBoard, listBoards, renameBoard, type Board } from "./api";
+import { createBoard, deleteBoard, listBoards, renameBoard, setBoardColor, type Board } from "./api";
 
 class Boards {
   workspaceId: number | null = null;
@@ -36,6 +36,11 @@ class Boards {
 
   async rename(id: number, name: string) {
     const board = await renameBoard(id, name);
+    this.list = this.list.map((b) => (b.id === id ? board : b));
+  }
+
+  async setColor(id: number, color: string | null) {
+    const board = await setBoardColor(id, color);
     this.list = this.list.map((b) => (b.id === id ? board : b));
   }
 

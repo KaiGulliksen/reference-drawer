@@ -29,6 +29,8 @@ export interface Workspace {
   path: string;
   /** Whether images in subfolders are included. */
   recursive: boolean;
+  /** One of the colours in colors.ts, or null. */
+  color: string | null;
 }
 
 /** Lists the images in a workspace's folder, and keeps tags with images that were renamed or moved. */
@@ -46,6 +48,9 @@ export const renameWorkspace = (id: number, name: string) => invoke<Workspace>("
 export const setWorkspaceRecursive = (id: number, recursive: boolean) =>
   invoke<Workspace>("set_workspace_recursive", { id, recursive });
 
+export const setWorkspaceColor = (id: number, color: string | null) =>
+  invoke<Workspace>("set_workspace_color", { id, color });
+
 export const setWorkspaceFolder = (id: number, path: string) => invoke<Workspace>("set_workspace_folder", { id, path });
 
 /** Removes a workspace (and its tags) from the library. Its folder and images are not touched. */
@@ -54,6 +59,8 @@ export const removeWorkspace = (id: number) => invoke<void>("remove_workspace", 
 export interface Tag {
   id: number;
   name: string;
+  /** One of the colours in colors.ts, or null. */
+  color: string | null;
 }
 
 /** Every tag in a workspace, and which tags each tagged image has. */
@@ -75,6 +82,9 @@ export const removeTag = (workspaceId: number, paths: string[], tagId: number) =
 /** Renames a tag (merging it into another tag if that name is taken). */
 export const renameTag = (workspaceId: number, tagId: number, name: string) =>
   invoke<TagData>("rename_tag", { workspaceId, tagId, name });
+
+export const setTagColor = (workspaceId: number, tagId: number, color: string | null) =>
+  invoke<void>("set_tag_color", { workspaceId, tagId, color });
 
 export const deleteTag = (workspaceId: number, tagId: number) => invoke<void>("delete_tag", { workspaceId, tagId });
 
@@ -150,6 +160,8 @@ export interface Board {
   id: number;
   workspaceId: number;
   name: string;
+  /** One of the colours in colors.ts, or null. */
+  color: string | null;
   /** Number of images on the board (notes not counted). */
   imageCount: number;
 }
@@ -192,6 +204,7 @@ export interface BoardData {
 export const listBoards = (workspaceId: number) => invoke<Board[]>("list_boards", { workspaceId });
 export const createBoard = (workspaceId: number, name: string) => invoke<Board>("create_board", { workspaceId, name });
 export const renameBoard = (id: number, name: string) => invoke<Board>("rename_board", { id, name });
+export const setBoardColor = (id: number, color: string | null) => invoke<Board>("set_board_color", { id, color });
 /** Deletes a board and what's on it. The images themselves are not touched. */
 export const deleteBoard = (id: number) => invoke<void>("delete_board", { id });
 export const getBoard = (id: number) => invoke<BoardData>("get_board", { id });

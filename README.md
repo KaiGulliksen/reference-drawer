@@ -31,6 +31,12 @@ and the app says *Finder* where it says *Explorer* here.
     The search box narrows the list; Enter shows the best match.
   - Double-click a tag to rename it (renaming onto an existing name merges the two), or
     right-click it to delete it. Tags belong to their workspace.
+- **Colors:** right-click a workspace, board or tag (or use **⋯** on a workspace) and click one of
+  the color dots to give it that color; the crossed-out dot removes it. Workspaces and boards get a
+  colored icon in the sidebar; a tag's color shows on its **#** in the sidebar, its chips on
+  thumbnails, in the tag editor and filter bar, and as a dot in the viewer. With tags hidden on
+  thumbnails, the small "has tags" dot takes the color of the image's first colored tag.
+  In the menu, ↑/↓ reach the row of colors and ←/→ move along it.
 - In the viewer:
   - scroll to zoom (towards the cursor) · drag to pan · double-click to toggle fit / actual size
   - ← / → (or A / D) previous / next · F or 0 fit · 1 actual size · + / − zoom
@@ -119,7 +125,8 @@ src/                      the interface (Svelte)
   lib/board.ts            board geometry: placing new images, Arrange, Fit
   lib/drop.ts             reading images and folders dragged onto the window from other apps
   lib/boards.svelte.ts    the open workspace's boards, kept in sync with the database
-  lib/ContextMenu.svelte  right-click menus (items defined in lib/menu.ts)
+  lib/ContextMenu.svelte  right-click menus (items defined in lib/menu.ts), including the color row
+  lib/colors.ts           the colors workspaces, boards and tags can have, and how each looks
   lib/tags.svelte.ts      the open workspace's tags, kept in sync with the database
   lib/platform.ts         differences between Windows, macOS and Linux (shortcuts, names, paths)
   lib/Grid.svelte         virtualized thumbnail grid (only on-screen tiles exist)
@@ -131,7 +138,7 @@ src/                      the interface (Svelte)
 src-tauri/                the backend (Rust)
   src/lib.rs              app setup, commands, the thumb:// protocol
   src/boards.rs           mood boards and what's on them, with tests
-  src/library.rs          the library database (workspaces and tags), with its tests;
+  src/library.rs          the library database (workspaces, tags, their colors), with its tests;
                           `reconcile` keeps tags with renamed and moved images
   src/identity.rs         fingerprints of image contents (to recognise renamed files)
   src/import.rs           saves images dragged in from other apps (and downloads web addresses)

@@ -5,7 +5,8 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
-  import { formatBytes, fullUrl, imageSize, previewSizeForScreen, previewUrl, thumbUrl, type ImageEntry } from "./api";
+  import { formatBytes, fullUrl, imageSize, previewSizeForScreen, previewUrl, thumbUrl, type ImageEntry, type Tag } from "./api";
+  import { colorHex } from "./colors";
   import { fileManagerName } from "./platform";
 
   interface Props {
@@ -13,8 +14,8 @@
     index: number;
     /** False while something (like the tag editor) is open on top, so keys go there instead. */
     active?: boolean;
-    /** The tag names to show for an image. */
-    tagsOf?: (path: string) => string[];
+    /** The tags to show for an image, sorted by name. */
+    tagsOf?: (path: string) => readonly Tag[];
     /** "Add to board" was clicked; `x`, `y` is where to show the list of boards. */
     onaddtoboard?: (path: string, x: number, y: number) => void;
     onclose: () => void;
@@ -282,7 +283,13 @@
     <div class="info">
       <span class="name" title={image.path}>{image.name}</span>
       {#if imageTags.length}
-        <span class="tags" title="Tags">{imageTags.join(" · ")}</span>
+        <span class="tags" title="Tags">
+          {#each imageTags as tag, i (tag.id)}{#if i > 0}<span class="sep">·</span>{/if}<span
+              class="tag"
+              class:colored={!!colorHex(tag.color)}
+              style:--tag={colorHex(tag.color)}>{tag.name}</span
+            >{/each}
+        </span>
       {/if}
       {#if naturalWidth}<span>{naturalWidth} × {naturalHeight}</span>{/if}
       <span>{formatBytes(image.size)}</span>
@@ -420,6 +427,20 @@
     overflow: hidden;
     text-overflow: ellipsis;
     color: #c8d8ff;
+  }
+  /* A coloured tag gets a dot in its colour before the name. */
+  .info .tag.colored::before {
+    content: "";
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 5px;
+    border-radius: 50%;
+    background: var(--tag);
+  }
+  .info .sep {
+    margin: 0 7px;
+    color: var(--text-dim);
   }
   .controls {
     display: flex;

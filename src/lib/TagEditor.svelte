@@ -8,6 +8,7 @@
 -->
 <script lang="ts">
   import type { Tag } from "./api";
+  import { colorHex, colorTint } from "./colors";
 
   interface Props {
     /** Every tag in the workspace. */
@@ -150,7 +151,7 @@
       {#each chips as tag (tag.id)}
         {@const count = applied.get(tag.id) ?? 0}
         {@const partial = count < targetCount}
-        <span class="chip" class:partial>
+        <span class="chip" class:partial style:--tag={colorHex(tag.color)} style:--tag-bg={colorTint(tag.color, 0.3)}>
           {#if partial}
             <button class="chip-name" onclick={() => add(tag.name)} title="Only on {count} of {targetCount}. Click to add it to all.">
               {tag.name} <span class="count">{count}/{targetCount}</span>
@@ -193,7 +194,9 @@
         <li role="option" aria-selected={i === highlighted}>
           <button class:highlighted={i === highlighted} onclick={() => pick(option)} tabindex="-1">
             {#if option.kind === "tag"}
-              <span>{option.tag.name}</span>
+              <span class="option-name">
+                <span class="dot" style:--tag={colorHex(option.tag.color)}></span>{option.tag.name}
+              </span>
               <span class="count">{usage.get(option.tag.id) ?? 0}</span>
             {:else}
               <span>Create “{option.name}”</span>
@@ -261,8 +264,9 @@
     display: inline-flex;
     align-items: center;
     border-radius: 999px;
-    background: #24406e;
-    border: 1px solid #3a63a8;
+    /* A tag's own colour, if it has one. */
+    background: var(--tag-bg, #24406e);
+    border: 1px solid var(--tag, #3a63a8);
   }
   .chip.partial {
     background: transparent;
@@ -290,6 +294,18 @@
   .chip-remove:hover {
     color: #fff;
     background: none;
+  }
+  .option-name {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  /* The tag's colour; an uncoloured tag gets an invisible dot, so the names stay lined up. */
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--tag, transparent);
   }
   .count {
     font-size: 11px;

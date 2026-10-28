@@ -3,6 +3,7 @@
 -->
 <script lang="ts">
   import type { Board, Workspace } from "./api";
+  import { colorHex, colorTint } from "./colors";
   import { hasPrimaryModifier, primaryKeyLabel, shortcutLabel } from "./platform";
   import type { TagItem } from "./tags.svelte";
 
@@ -177,10 +178,18 @@
                 onmenu(workspace, e.clientX, e.clientY);
               }}
             >
-              <svg class="folder" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+              <svg
+                class="folder"
+                class:colored={!!colorHex(workspace.color)}
+                style:--item={colorHex(workspace.color)}
+                viewBox="0 0 16 16"
+                width="15"
+                height="15"
+                aria-hidden="true"
+              >
                 <path
                   d="M1.5 4.5a1 1 0 0 1 1-1h3.6l1.4 1.5h6a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z"
-                  fill="none"
+                  fill={colorTint(workspace.color, 0.35) ?? "none"}
                   stroke="currentColor"
                   stroke-width="1.2"
                 />
@@ -242,7 +251,15 @@
                   onboardmenu(board, e.clientX, e.clientY);
                 }}
               >
-                <svg class="folder" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+                <svg
+                  class="folder"
+                  class:colored={!!colorHex(board.color)}
+                  style:--item={colorHex(board.color)}
+                  viewBox="0 0 16 16"
+                  width="15"
+                  height="15"
+                  aria-hidden="true"
+                >
                   <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.2" />
                   <rect x="3.5" y="4.5" width="4" height="3" fill="currentColor" opacity="0.6" />
                   <rect x="8.5" y="6.5" width="4" height="5" fill="currentColor" opacity="0.6" />
@@ -316,7 +333,12 @@
                   ontagmenu(tag, e.clientX, e.clientY);
                 }}
               >
-                <span class="hash" aria-hidden="true">#</span>
+                <span
+                  class="hash"
+                  class:colored={!!colorHex(tag.color)}
+                  style:--item={colorHex(tag.color)}
+                  aria-hidden="true">#</span
+                >
                 <span class="name">{tag.name}</span>
                 <span class="count">{tag.count.toLocaleString()}</span>
               </button>
@@ -445,6 +467,12 @@
   li.active .folder {
     color: var(--accent);
   }
+  /* An item's own colour wins over the usual grey and the "open" blue (the bar on the left
+     still shows which one is open). */
+  li .folder.colored,
+  li .hash.colored {
+    color: var(--item);
+  }
   li.missing .name {
     color: var(--text-dim);
     text-decoration: line-through;
@@ -510,8 +538,11 @@
     flex-shrink: 0;
     color: var(--text-dim);
   }
-  li.active .hash {
+  li.active .hash:not(.colored) {
     color: var(--accent);
+  }
+  .hash.colored {
+    font-weight: 700;
   }
   .untagged {
     font-style: italic;

@@ -1,17 +1,19 @@
 // The tags of the active workspace, kept in sync with the library database.
 
-import { addTag, deleteTag, getTags, removeTag, renameTag, type Tag, type TagData } from "./api";
+import { addTag, deleteTag, getTags, removeTag, renameTag, setTagColor, type Tag, type TagData } from "./api";
 import { pathKey } from "./platform";
 
 /** A tag as listed in the sidebar. */
 export interface TagItem {
   id: number;
   name: string;
+  color: string | null;
   /** How many images in the current view have this tag. */
   count: number;
 }
 
 const NO_TAGS: readonly number[] = [];
+const NO_TAG_LIST: readonly Tag[] = [];
 
 const byName = (a: Tag, b: Tag) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true });
 
@@ -23,6 +25,7 @@ class Tags {
   /** Tag ids per image, keyed by `pathKey` (which ignores capitals where the system does). Replaced on every change. */
   private byImage = $state.raw(new Map<string, readonly number[]>());
   readonly names = $derived(new Map(this.list.map((t) => [t.id, t.name])));
+  readonly byId = $derived(new Map(this.list.map((t) => [t.id, t])));
 
   // Changes are sent one at a time, in order, so quick successive edits can't overtake each other.
   private queue: Promise<unknown> = Promise.resolve();
@@ -46,10 +49,17 @@ class Tags {
   }
 
   namesOf(path: string): string[] {
-    return this.idsOf(path)
-      .map((id) => this.names.get(id) ?? "")
-      .filter(Boolean)
-      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    return this.of(path).map((t) => t.name);
+  }
+
+  /** An image's tags, sorted by name. */
+  of(path: string): readonly Tag[] {
+    const ids = this.idsOf(path);
+    if (ids.length === 0) return NO_TAG_LIST;
+    return ids
+      .map((id) => this.byId.get(id))
+      .filter((t): t is Tag => !!t)
+      .sort(byName);
   }
 
   /** Adds the tag called `name` (created if new) to every image in `paths`. */
@@ -89,6 +99,14 @@ class Tags {
     return this.run(async (workspaceId) => {
       const data = await renameTag(workspaceId, tagId, name);
       if (workspaceId === this.workspaceId) this.apply(data);
+    });
+  }
+
+  setColor(tagId: number, color: string | null) {
+    return this.run(async (workspaceId) => {
+      await setTagColor(workspaceId, tagId, color);
+      if (workspaceId !== this.workspaceId) return;
+      this.list = this.list.map((t) => (t.id === tagId ? { ...t, color } : t));
     });
   }
 

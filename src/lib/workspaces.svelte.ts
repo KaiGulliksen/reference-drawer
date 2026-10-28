@@ -5,6 +5,7 @@ import {
   listWorkspaces,
   removeWorkspace,
   renameWorkspace,
+  setWorkspaceColor,
   setWorkspaceFolder,
   setWorkspaceRecursive,
   type Workspace,
@@ -26,6 +27,10 @@ class Workspaces {
 
   async rename(id: number, name: string) {
     this.replace(await renameWorkspace(id, name));
+  }
+
+  async setColor(id: number, color: string | null) {
+    this.replace(await setWorkspaceColor(id, color));
   }
 
   async setRecursive(id: number, recursive: boolean) {

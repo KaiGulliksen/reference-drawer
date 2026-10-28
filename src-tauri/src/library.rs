@@ -115,7 +115,23 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX board_items_by_board ON board_items (board_id);
     CREATE INDEX board_items_by_image ON board_items (image_id);",
+    // 6: an optional colour for each workspace, board and tag (one of `COLORS`; NULL is none).
+    "ALTER TABLE workspaces ADD COLUMN color TEXT;
+    ALTER TABLE boards ADD COLUMN color TEXT;
+    ALTER TABLE tags ADD COLUMN color TEXT;",
 ];
+
+/// The colours a workspace, board or tag can be given. Only the names are stored; the
+/// interface decides what each one looks like (`src/lib/colors.ts`).
+pub(crate) const COLORS: &[&str] = &["red", "orange", "yellow", "green", "teal", "blue", "purple", "pink"];
+
+/// Checks that a colour is one of `COLORS` (or none).
+pub(crate) fn check_color(color: Option<&str>) -> Result<Option<&str>> {
+    match color {
+        Some(name) if !COLORS.contains(&name) => Err(format!("Unknown color: {name}")),
+        _ => Ok(color),
+    }
+}
 
 /// SQL that compares a stored path with a parameter the way this system compares file names.
 pub(crate) fn same_path(column: &str, param: &str) -> String {
@@ -138,12 +154,15 @@ pub struct Workspace {
     pub path: String,
     /// Whether images in subfolders are included.
     pub recursive: bool,
+    /// One of `COLORS`, or none.
+    pub color: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
 pub struct Tag {
     pub id: i64,
     pub name: String,
+    pub color: Option<String>,
 }
 
 /// Every tag in a workspace, and which tags each tagged image has.
@@ -182,13 +201,9 @@ impl Library {
     pub fn workspaces(&self) -> Result<Vec<Workspace>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, path, recursive FROM workspaces ORDER BY position, id")
+            .prepare(&format!("SELECT {WORKSPACE_COLUMNS} FROM workspaces ORDER BY position, id"))
             .map_err(err)?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok(Workspace { id: row.get(0)?, name: row.get(1)?, path: row.get(2)?, recursive: row.get(3)? })
-            })
-            .map_err(err)?;
+        let rows = stmt.query_map([], workspace_row).map_err(err)?;
         rows.collect::<std::result::Result<_, _>>().map_err(err)
     }
 
@@ -236,6 +251,10 @@ impl Library {
         self.update(id, "UPDATE workspaces SET name = ?2 WHERE id = ?1", name)
     }
 
+    pub fn set_workspace_color(&self, id: i64, color: Option<&str>) -> Result<Workspace> {
+        self.update(id, "UPDATE workspaces SET color = ?2 WHERE id = ?1", check_color(color)?)
+    }
+
     pub fn set_workspace_recursive(&self, id: i64, recursive: bool) -> Result<Workspace> {
         self.update(id, "UPDATE workspaces SET recursive = ?2 WHERE id = ?1", recursive)
     }
@@ -270,9 +289,9 @@ impl Library {
 
         let existing: Option<Tag> = tx
             .query_row(
-                "SELECT id, name FROM tags WHERE workspace_id = ?1 AND name = ?2",
+                "SELECT id, name, color FROM tags WHERE workspace_id = ?1 AND name = ?2",
                 params![workspace_id, name],
-                |r| Ok(Tag { id: r.get(0)?, name: r.get(1)? }),
+                |r| Ok(Tag { id: r.get(0)?, name: r.get(1)?, color: r.get(2)? }),
             )
             .optional()
             .map_err(err)?;
@@ -284,7 +303,7 @@ impl Library {
                     params![workspace_id, name, now()],
                 )
                 .map_err(err)?;
-                Tag { id: tx.last_insert_rowid(), name }
+                Tag { id: tx.last_insert_rowid(), name, color: None }
             }
         };
 
@@ -329,7 +348,8 @@ impl Library {
         Ok(deleted > 0)
     }
 
-    /// Renames a tag. Renaming it to the name of another existing tag merges the two.
+    /// Renames a tag. Renaming it to the name of another existing tag merges the two; the merged
+    /// tag keeps its own colour, or takes this one's if it had none.
     pub fn rename_tag(&self, workspace_id: i64, tag_id: i64, name: &str) -> Result<TagData> {
         let name = clean_tag_name(name)?;
         let mut conn = self.conn.lock().unwrap();
@@ -350,6 +370,12 @@ impl Library {
                     params![target, tag_id],
                 )
                 .map_err(err)?;
+                tx.execute(
+                    "UPDATE tags SET color = (SELECT color FROM tags WHERE id = ?2)
+                     WHERE id = ?1 AND color IS NULL",
+                    params![target, tag_id],
+                )
+                .map_err(err)?;
                 tx.execute("DELETE FROM tags WHERE id = ?1 AND workspace_id = ?2", params![tag_id, workspace_id])
                     .map_err(err)?;
             }
@@ -363,6 +389,20 @@ impl Library {
         }
         tx.commit().map_err(err)?;
         tag_data(&conn, workspace_id)
+    }
+
+    pub fn set_tag_color(&self, workspace_id: i64, tag_id: i64, color: Option<&str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn
+            .execute(
+                "UPDATE tags SET color = ?3 WHERE id = ?1 AND workspace_id = ?2",
+                params![tag_id, workspace_id, check_color(color)?],
+            )
+            .map_err(err)?;
+        if changed == 0 {
+            return Err("That tag no longer exists.".into());
+        }
+        Ok(())
     }
 
     /// Deletes a tag and removes it from every image. The image files are not touched.
@@ -583,21 +623,26 @@ pub(crate) fn image_record(conn: &Connection, workspace_id: i64, rel: &str) -> R
     }
 }
 
+/// The columns `workspace_row` reads, in its order.
+const WORKSPACE_COLUMNS: &str = "id, name, path, recursive, color";
+
+fn workspace_row(row: &rusqlite::Row) -> rusqlite::Result<Workspace> {
+    Ok(Workspace { id: row.get(0)?, name: row.get(1)?, path: row.get(2)?, recursive: row.get(3)?, color: row.get(4)? })
+}
+
 pub(crate) fn get_workspace(conn: &Connection, id: i64) -> Result<Workspace> {
-    conn.query_row("SELECT id, name, path, recursive FROM workspaces WHERE id = ?1", [id], |row| {
-        Ok(Workspace { id: row.get(0)?, name: row.get(1)?, path: row.get(2)?, recursive: row.get(3)? })
-    })
-    .map_err(|_| "That workspace no longer exists.".to_string())
+    conn.query_row(&format!("SELECT {WORKSPACE_COLUMNS} FROM workspaces WHERE id = ?1"), [id], workspace_row)
+        .map_err(|_| "That workspace no longer exists.".to_string())
 }
 
 fn tag_data(conn: &Connection, workspace_id: i64) -> Result<TagData> {
     let folder = PathBuf::from(get_workspace(conn, workspace_id)?.path);
 
     let mut stmt = conn
-        .prepare("SELECT id, name FROM tags WHERE workspace_id = ?1 ORDER BY name")
+        .prepare("SELECT id, name, color FROM tags WHERE workspace_id = ?1 ORDER BY name")
         .map_err(err)?;
     let tags = stmt
-        .query_map([workspace_id], |r| Ok(Tag { id: r.get(0)?, name: r.get(1)? }))
+        .query_map([workspace_id], |r| Ok(Tag { id: r.get(0)?, name: r.get(1)?, color: r.get(2)? }))
         .map_err(err)?
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(err)?;
@@ -876,6 +921,98 @@ mod tests {
         } else {
             assert_eq!(images, 2, "Linux: two different files");
         }
+    }
+
+    // ---- Colours ----
+
+    #[test]
+    fn workspaces_and_tags_can_be_given_a_colour_and_have_it_taken_away() {
+        let (lib, ws, folder) = setup("colors");
+        assert_eq!(ws.color, None, "no colour to begin with");
+        assert_eq!(lib.set_workspace_color(ws.id, Some("teal")).unwrap().color.as_deref(), Some("teal"));
+        assert_eq!(lib.workspaces().unwrap()[0].color.as_deref(), Some("teal"));
+        assert_eq!(lib.set_workspace_color(ws.id, None).unwrap().color, None);
+
+        let tag = lib.add_tag(ws.id, &[path(&folder, "a.jpg")], "sky").unwrap();
+        assert_eq!(tag.color, None);
+        lib.set_tag_color(ws.id, tag.id, Some("blue")).unwrap();
+        assert_eq!(lib.tag_data(ws.id).unwrap().tags[0].color.as_deref(), Some("blue"));
+        let again = lib.add_tag(ws.id, &[path(&folder, "b.jpg")], "Sky").unwrap();
+        assert_eq!(again.color.as_deref(), Some("blue"), "adding an existing tag keeps its colour");
+        lib.set_tag_color(ws.id, tag.id, None).unwrap();
+        assert_eq!(lib.tag_data(ws.id).unwrap().tags[0].color, None);
+    }
+
+    #[test]
+    fn only_known_colours_are_accepted() {
+        let (lib, ws, folder) = setup("bad-colors");
+        assert!(lib.set_workspace_color(ws.id, Some("#ff0000")).is_err());
+        let tag = lib.add_tag(ws.id, &[path(&folder, "a.jpg")], "x").unwrap();
+        assert!(lib.set_tag_color(ws.id, tag.id, Some("Red")).is_err(), "names are exact");
+        assert!(lib.set_tag_color(ws.id, tag.id + 1, Some("red")).is_err(), "a tag that doesn't exist");
+        assert_eq!(lib.tag_data(ws.id).unwrap().tags[0].color, None, "nothing was changed");
+    }
+
+    #[test]
+    fn merging_tags_keeps_the_target_colour_or_takes_the_merged_one() {
+        let (lib, ws, folder) = setup("merge-colors");
+        let a = path(&folder, "a.jpg");
+        let red = lib.add_tag(ws.id, &[a.clone()], "red one").unwrap();
+        let blue = lib.add_tag(ws.id, &[a.clone()], "blue one").unwrap();
+        let plain = lib.add_tag(ws.id, &[a.clone()], "plain").unwrap();
+        lib.set_tag_color(ws.id, red.id, Some("red")).unwrap();
+        lib.set_tag_color(ws.id, blue.id, Some("blue")).unwrap();
+
+        // Into a tag with its own colour: that colour stays.
+        let data = lib.rename_tag(ws.id, red.id, "blue one").unwrap();
+        assert_eq!(data.tags.iter().find(|t| t.id == blue.id).unwrap().color.as_deref(), Some("blue"));
+        // Into a tag without one: it takes the merged tag's colour.
+        let data = lib.rename_tag(ws.id, blue.id, "plain").unwrap();
+        assert_eq!(data.tags.len(), 1);
+        assert_eq!(data.tags[0].id, plain.id);
+        assert_eq!(data.tags[0].color.as_deref(), Some("blue"));
+    }
+
+    #[test]
+    fn upgrading_a_library_from_before_colours_keeps_everything() {
+        // A library as version 0.8.0 left it (5 schema steps), with a workspace, a tag and a board.
+        let dir = std::env::temp_dir().join(format!("reflib-test-upgrade-colors-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let folder = dir.join("Art");
+        fs::create_dir_all(&folder).unwrap();
+        let file = dir.join("library.db");
+        {
+            let conn = Connection::open(&file).unwrap();
+            for sql in &MIGRATIONS[..5] {
+                conn.execute_batch(sql).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 5).unwrap();
+            conn.execute(
+                "INSERT INTO workspaces (id, name, path, position, created_at) VALUES (1, 'Art', ?1, 1, 0)",
+                [folder.to_str().unwrap()],
+            )
+            .unwrap();
+            conn.execute_batch(
+                "INSERT INTO images (id, workspace_id, rel_path) VALUES (10, 1, 'a.jpg');
+                 INSERT INTO tags (id, workspace_id, name, created_at) VALUES (5, 1, 'figure', 0);
+                 INSERT INTO image_tags (image_id, tag_id) VALUES (10, 5);
+                 INSERT INTO boards (id, workspace_id, name, position, created_at) VALUES (3, 1, 'Knight', 1, 0);
+                 INSERT INTO board_items (board_id, image_id, x, y, width, height, z) VALUES (3, 10, 0, 0, 100, 100, 1);",
+            )
+            .unwrap();
+        }
+
+        let lib = Library::open(&file).unwrap();
+        let ws = lib.workspace(1).unwrap();
+        assert_eq!((ws.name.as_str(), ws.color), ("Art", None));
+        let data = lib.tag_data(1).unwrap();
+        assert_eq!(tags_of(&data, &path(&folder, "a.jpg")), ["figure"]);
+        assert_eq!(data.tags[0].color, None);
+        let board = lib.board_data(3).unwrap();
+        assert_eq!((board.board.name.as_str(), board.board.color.clone(), board.items.len()), ("Knight", None, 1));
+
+        lib.set_tag_color(1, 5, Some("green")).unwrap();
+        assert_eq!(lib.set_board_color(3, Some("pink")).unwrap().color.as_deref(), Some("pink"));
     }
 
     // ---- Tags following renamed and moved files ----

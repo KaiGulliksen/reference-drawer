@@ -4,7 +4,7 @@
 //! so they take no extra disk space and follow renamed or moved files the same way tags do.
 
 use crate::library::{
-    Library, Result, err, full_path, get_workspace, image_record, now, relative_path,
+    Library, Result, check_color, err, full_path, get_workspace, image_record, now, relative_path,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,8 @@ pub struct Board {
     pub id: i64,
     pub workspace_id: i64,
     pub name: String,
+    /// One of `COLORS` (library.rs), or none.
+    pub color: Option<String>,
     /// Number of images on the board (notes not counted).
     pub image_count: i64,
 }
@@ -76,15 +78,9 @@ impl Library {
     pub fn boards(&self, workspace_id: i64) -> Result<Vec<Board>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare(
-                "SELECT b.id, b.workspace_id, b.name,
-                        (SELECT COUNT(*) FROM board_items i WHERE i.board_id = b.id AND i.image_id IS NOT NULL)
-                 FROM boards b WHERE b.workspace_id = ?1 ORDER BY b.position, b.id",
-            )
+            .prepare(&format!("SELECT {BOARD_COLUMNS} FROM boards b WHERE b.workspace_id = ?1 ORDER BY b.position, b.id"))
             .map_err(err)?;
-        stmt.query_map([workspace_id], |r| {
-            Ok(Board { id: r.get(0)?, workspace_id: r.get(1)?, name: r.get(2)?, image_count: r.get(3)? })
-        })
+        stmt.query_map([workspace_id], board_row)
         .map_err(err)?
         .collect::<std::result::Result<_, _>>()
         .map_err(err)
@@ -107,6 +103,12 @@ impl Library {
         let name = board_name(name)?;
         let conn = self.conn.lock().unwrap();
         conn.execute("UPDATE boards SET name = ?2 WHERE id = ?1", params![id, name]).map_err(err)?;
+        get_board(&conn, id)
+    }
+
+    pub fn set_board_color(&self, id: i64, color: Option<&str>) -> Result<Board> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("UPDATE boards SET color = ?2 WHERE id = ?1", params![id, check_color(color)?]).map_err(err)?;
         get_board(&conn, id)
     }
 
@@ -271,14 +273,16 @@ impl Library {
     }
 }
 
+/// The columns `board_row` reads, in its order, from `boards b`.
+const BOARD_COLUMNS: &str = "b.id, b.workspace_id, b.name, b.color,
+    (SELECT COUNT(*) FROM board_items i WHERE i.board_id = b.id AND i.image_id IS NOT NULL)";
+
+fn board_row(r: &rusqlite::Row) -> rusqlite::Result<Board> {
+    Ok(Board { id: r.get(0)?, workspace_id: r.get(1)?, name: r.get(2)?, color: r.get(3)?, image_count: r.get(4)? })
+}
+
 fn get_board(conn: &Connection, id: i64) -> Result<Board> {
-    conn.query_row(
-        "SELECT b.id, b.workspace_id, b.name,
-                (SELECT COUNT(*) FROM board_items i WHERE i.board_id = b.id AND i.image_id IS NOT NULL)
-         FROM boards b WHERE b.id = ?1",
-        [id],
-        |r| Ok(Board { id: r.get(0)?, workspace_id: r.get(1)?, name: r.get(2)?, image_count: r.get(3)? }),
-    )
+    conn.query_row(&format!("SELECT {BOARD_COLUMNS} FROM boards b WHERE b.id = ?1"), [id], board_row)
     .optional()
     .map_err(err)?
     .ok_or_else(|| "That board no longer exists.".to_string())
@@ -364,6 +368,18 @@ mod tests {
         lib.set_board_view(board.id, BoardView { x: -40.0, y: 12.0, zoom: 0.75 }).unwrap();
         let view = lib.board_data(board.id).unwrap().view;
         assert_eq!((view.x, view.y, view.zoom), (-40.0, 12.0, 0.75));
+    }
+
+    #[test]
+    fn boards_can_be_given_a_colour() {
+        let (lib, ws, _) = setup("color");
+        let board = lib.create_board(ws, "Board").unwrap();
+        assert_eq!(board.color, None);
+        assert_eq!(lib.set_board_color(board.id, Some("orange")).unwrap().color.as_deref(), Some("orange"));
+        assert_eq!(lib.boards(ws).unwrap()[0].color.as_deref(), Some("orange"));
+        assert_eq!(lib.board_data(board.id).unwrap().board.color.as_deref(), Some("orange"));
+        assert!(lib.set_board_color(board.id, Some("beige")).is_err());
+        assert_eq!(lib.set_board_color(board.id, None).unwrap().color, None);
     }
 
     #[test]

@@ -100,6 +100,12 @@ async fn rename_workspace(library: State<'_, Library>, id: i64, name: String) ->
     library.rename_workspace(id, &name)
 }
 
+/// Gives a workspace one of the library's colours (`COLORS`), or none.
+#[tauri::command]
+async fn set_workspace_color(library: State<'_, Library>, id: i64, color: Option<String>) -> Result<Workspace, String> {
+    library.set_workspace_color(id, color.as_deref())
+}
+
 #[tauri::command]
 async fn set_workspace_recursive(library: State<'_, Library>, id: i64, recursive: bool) -> Result<Workspace, String> {
     library.set_workspace_recursive(id, recursive)
@@ -160,6 +166,16 @@ async fn rename_tag(
 }
 
 #[tauri::command]
+async fn set_tag_color(
+    library: State<'_, Library>,
+    workspace_id: i64,
+    tag_id: i64,
+    color: Option<String>,
+) -> Result<(), String> {
+    library.set_tag_color(workspace_id, tag_id, color.as_deref())
+}
+
+#[tauri::command]
 async fn delete_tag(library: State<'_, Library>, workspace_id: i64, tag_id: i64) -> Result<(), String> {
     library.delete_tag(workspace_id, tag_id)
 }
@@ -177,6 +193,11 @@ async fn create_board(library: State<'_, Library>, workspace_id: i64, name: Stri
 #[tauri::command]
 async fn rename_board(library: State<'_, Library>, id: i64, name: String) -> Result<Board, String> {
     library.rename_board(id, &name)
+}
+
+#[tauri::command]
+async fn set_board_color(library: State<'_, Library>, id: i64, color: Option<String>) -> Result<Board, String> {
+    library.set_board_color(id, color.as_deref())
 }
 
 #[tauri::command]
@@ -379,6 +400,7 @@ pub fn run() {
             list_workspaces,
             add_workspace,
             rename_workspace,
+            set_workspace_color,
             set_workspace_recursive,
             set_workspace_folder,
             remove_workspace,
@@ -386,10 +408,12 @@ pub fn run() {
             add_tag,
             remove_tag,
             rename_tag,
+            set_tag_color,
             delete_tag,
             list_boards,
             create_board,
             rename_board,
+            set_board_color,
             delete_board,
             get_board,
             add_board_images,

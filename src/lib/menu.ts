@@ -9,6 +9,13 @@ export type MenuItem =
       /** Shown in red, for actions like removing something. */
       danger?: boolean;
       disabled?: boolean;
+      /** A coloured dot before the label (a colour name from colors.ts), e.g. a board's colour. */
+      color?: string | null;
+    }
+  | {
+      /** A row of colour swatches (plus "no colour"), with `current` marked. */
+      current: string | null;
+      pick: (color: string | null) => void;
     }
   | "separator";
 

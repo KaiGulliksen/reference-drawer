@@ -7,7 +7,8 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
-  import { thumbUrl, type ImageEntry } from "./api";
+  import { thumbUrl, type ImageEntry, type Tag } from "./api";
+  import { colorHex, colorTint } from "./colors";
   import { computeLayout, firstTileFrom, neighbour, PADDING, tileHeight, tilesBetween, tileTop } from "./layout";
   import { hasOtherModifier, hasPrimaryModifier } from "./platform";
   import type { GridLayout, TileFit } from "./settings.svelte";
@@ -30,8 +31,8 @@
     active: boolean;
     /** Index of the image to start at the top of the view (to return to where you were). */
     initialTopIndex?: number;
-    /** The tag names to show under an image's name. */
-    tagsOf?: (path: string) => string[];
+    /** The tags to show under an image's name, sorted by name. */
+    tagsOf?: (path: string) => readonly Tag[];
     onopen: (index: number) => void;
     /** Right-click on an image. */
     onitemmenu?: (index: number, x: number, y: number) => void;
@@ -299,7 +300,7 @@
         style:width="{r[2]}px"
         style:height="{r[3]}px"
         style:transform="translate({r[0]}px, {r[1]}px)"
-        title={tileTags.length ? `${image.name}\nTags: ${tileTags.join(", ")}` : image.name}
+        title={tileTags.length ? `${image.name}\nTags: ${tileTags.map((t) => t.name).join(", ")}` : image.name}
         onpointerdown={(e) => onTilePointerDown(e, i)}
         onclick={(e) => onTileClick(e, i)}
         ondblclick={(e) => !hasPrimaryModifier(e) && !e.shiftKey && onopen(i)}
@@ -322,14 +323,20 @@
           </span>
         {/if}
         {#if tileTags.length && !showTags}
-          <!-- With tags hidden, a small dot still shows that the image has some. -->
-          <span class="tag-dot" aria-hidden="true"></span>
+          <!-- With tags hidden, a small dot still shows that the image has some (in the colour of
+               its first coloured tag). -->
+          <span class="tag-dot" style:--tag={colorHex(tileTags.find((t) => t.color)?.color)} aria-hidden="true"></span>
         {/if}
         {#if showNames || (showTags && tileTags.length)}
           <span class="overlay">
             {#if showTags && tileTags.length}
               <span class="chips">
-                {#each tileTags as tag (tag)}<span class="chip">{tag}</span>{/each}
+                {#each tileTags as tag (tag.id)}<span
+                    class="chip"
+                    class:colored={!!colorHex(tag.color)}
+                    style:--tag={colorHex(tag.color)}
+                    style:--tag-bg={colorTint(tag.color, 0.4)}>{tag.name}</span
+                  >{/each}
               </span>
             {/if}
             {#if showNames}<span class="name">{image.name}</span>{/if}
@@ -401,7 +408,7 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: var(--accent);
+    background: var(--tag, var(--accent));
     box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.45);
     pointer-events: none;
   }
@@ -446,6 +453,12 @@
     background: rgba(28, 44, 78, 0.85);
     border: 1px solid rgba(110, 150, 230, 0.45);
     border-radius: 999px;
+  }
+  /* A tag with its own colour: tinted, over a neutral dark base so the text stays readable on any
+     image (and the colour isn't muddied by the usual blue). */
+  .chip.colored {
+    background: linear-gradient(var(--tag-bg), var(--tag-bg)), rgba(18, 18, 20, 0.85);
+    border-color: var(--tag);
   }
   .name {
     max-width: 100%;

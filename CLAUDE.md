@@ -102,7 +102,7 @@ explain *why*, in plain English, at the level of the surrounding code).
 ## Database
 
 `src-tauri/src/library.rs` (workspaces, tags, the shared helpers) and `boards.rs` (mood boards).
-Schema changes are numbered entries in `MIGRATIONS` (5 so far), only ever added at the end; never
+Schema changes are numbered entries in `MIGRATIONS` (6 so far), only ever added at the end; never
 edit an existing one, since installed copies have already run it. Foreign keys are switched off while
 migrating (rebuilding a table would otherwise delete everything linked to it) and each step is
 checked with `pragma_foreign_key_check` before it is saved. Add a test for every migration that
@@ -139,7 +139,10 @@ Any change to this logic needs tests in `library.rs` (they use real temp files).
 - `npm run check` must report 0 errors and 0 warnings.
 - Colours and sizes come from the CSS variables in `src/app.css` (dark theme).
 - Right-click menus: build `MenuItem[]` (`src/lib/menu.ts`) and set the page's `menu`; one shared
-  `ContextMenu` renders it. Menus open only on left/right clicks; backdrops ignore mouse buttons 3/4
+  `ContextMenu` renders it. A `{ current, pick }` item is a row of colour swatches.
+- Colours of workspaces, boards and tags: the database stores only a name from `COLORS`
+  (`library.rs`, checked by `check_color`); `src/lib/colors.ts` lists the same names and decides
+  how each looks (`colorHex` / `colorTint`). Add a colour to both lists. Menus open only on left/right clicks; backdrops ignore mouse buttons 3/4
   so the back button is handled once, by the page.
 - Destructive actions confirm first with the dialog plugin's `ask()`, and the text says what is and
   isn't affected ("The images themselves are not touched").

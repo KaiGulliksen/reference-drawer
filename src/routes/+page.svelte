@@ -23,6 +23,7 @@
   import { placeAt, placeNewImages } from "$lib/board";
   import { canTake, onlyFiles, readDrop, saveDropped, type Dropped } from "$lib/drop";
   import { boards } from "$lib/boards.svelte";
+  import { colorHex, colorTint } from "$lib/colors";
   import type { MenuItem, MenuRequest } from "$lib/menu";
   import {
     baseName,
@@ -134,7 +135,7 @@
   });
 
   const tagItems = $derived<TagItem[]>(
-    tags.list.filter((t) => usage.has(t.id)).map((t) => ({ id: t.id, name: t.name, count: usage.get(t.id) ?? 0 })),
+    tags.list.filter((t) => usage.has(t.id)).map((t) => ({ ...t, count: usage.get(t.id) ?? 0 })),
   );
   const untaggedCount = $derived(images.filter((i) => tags.idsOf(i.path).length === 0).length);
 
@@ -459,6 +460,7 @@
     const items: MenuItem[] = boards.list.map((board) => ({
       label: board.name,
       hint: String(board.imageCount),
+      color: board.color,
       action: () => addImagesToBoard(board.id, paths),
     }));
     if (items.length > 0) items.push("separator");
@@ -484,6 +486,7 @@
       items: [
         { label: "Open", action: () => openBoard(board.id) },
         { label: "Rename", action: () => (renamingBoardId = board.id) },
+        { current: board.color, pick: (color) => boards.setColor(board.id, color).catch((e) => (error = String(e))) },
         "separator",
         { label: "Delete board…", danger: true, action: () => deleteBoard(board) },
       ],
@@ -703,6 +706,7 @@
         { label: "Rename", action: () => (renamingId = workspace.id) },
         { label: "Change folder…", action: () => changeFolder(workspace) },
         { label: `Show folder in ${fileManagerName}`, action: () => revealItemInDir(workspace.path) },
+        { current: workspace.color, pick: (color) => workspaces.setColor(workspace.id, color).catch((e) => (error = String(e))) },
         "separator",
         { label: "Remove workspace…", danger: true, action: () => removeWorkspace(workspace) },
       ],
@@ -746,6 +750,7 @@
         },
         "separator",
         { label: "Rename", action: () => (renamingTagId = tag.id) },
+        { current: tag.color, pick: (color) => tags.setColor(tag.id, color).catch((e) => (error = String(e))) },
         { label: "Delete tag…", danger: true, action: () => deleteTag(tag) },
       ],
     };
@@ -1077,8 +1082,15 @@
           {#if filterUntagged}without tags{:else}tagged{/if}
         </span>
         {#each [...filterTags] as id (id)}
-          <button class="filter-chip" onclick={() => onTagClick(id, true)} title="Remove from the filter">
-            #{tags.names.get(id) ?? "?"} <span aria-hidden="true">✕</span>
+          {@const tag = tags.byId.get(id)}
+          <button
+            class="filter-chip"
+            style:--tag={colorHex(tag?.color)}
+            style:--tag-bg={colorTint(tag?.color, 0.3)}
+            onclick={() => onTagClick(id, true)}
+            title="Remove from the filter"
+          >
+            #{tag?.name ?? "?"} <span aria-hidden="true">✕</span>
           </button>
         {/each}
         <button class="link" onclick={clearFilter}>Clear filter</button>
@@ -1116,7 +1128,7 @@
           bind:focus={() => focus, (i) => (focusPath = filtered[i]?.path ?? null)}
           active={viewing === null && menu === null && editor === null && !settingsOpen}
           initialTopIndex={viewState.get(active.id)?.topIndex ?? 0}
-          tagsOf={(path) => tags.namesOf(path)}
+          tagsOf={(path) => tags.of(path)}
           onopen={(i) => (viewing = i)}
           onitemmenu={showImageMenu}
           ondragmove={(x, y) => (dropBoardId = boardUnder(x, y))}
@@ -1198,7 +1210,7 @@
     images={viewerImages}
     bind:index={viewing}
     active={editor === null && !settingsOpen && menu === null}
-    tagsOf={(path) => tags.namesOf(path)}
+    tagsOf={(path) => tags.of(path)}
     onaddtoboard={(path, x, y) => showBoardPicker([path], x, y)}
     onclose={closeViewer}
   />
@@ -1342,12 +1354,14 @@
     padding: 1px 10px;
     font-size: 12px;
     color: var(--text);
-    background: #24406e;
-    border: 1px solid #3a63a8;
+    /* A tag's own colour, if it has one. */
+    background: var(--tag-bg, #24406e);
+    border: 1px solid var(--tag, #3a63a8);
     border-radius: 999px;
   }
   .filter-chip:hover {
-    background: #2c4d84;
+    background: var(--tag-bg, #2c4d84);
+    filter: brightness(1.15);
   }
   .filter-chip span {
     margin-left: 4px;
