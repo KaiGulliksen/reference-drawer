@@ -9,6 +9,8 @@
   --accent: #5b9dff;
   --button: #2b2b30;
   --button-hover: #36363c;
+  /* Shared by the sidebar and the toolbar corner above it, so the two line up. */
+  --sidebar-width: 220px;
 
   color-scheme: dark;
   /* Each system's own interface font: Segoe UI on Windows, San Francisco on macOS, the desktop font on Linux. */

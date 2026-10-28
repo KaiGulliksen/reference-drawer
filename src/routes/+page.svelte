@@ -916,39 +916,10 @@
 <svelte:window {onkeydown} {onmousedown} {onmouseup} />
 
 <div class="app">
-  {#if !settings.sidebarCollapsed}
-    <Sidebar
-      workspaces={workspaces.list}
-      {activeId}
-      {missing}
-      bind:renamingId
-      onselect={openWorkspace}
-      onadd={addWorkspaceFromDialog}
-      onrename={renameWorkspace}
-      onmenu={showWorkspaceMenu}
-      boards={boards.list}
-      {activeBoardId}
-      bind:renamingBoardId
-      dropBoardId={dropBoardId ?? (dropTarget?.kind === "board" ? dropTarget.id : null)}
-      dropWorkspaceId={dropTarget?.kind === "workspace" ? dropTarget.id : null}
-      onboardselect={openBoard}
-      onboardadd={newBoard}
-      onboardrename={renameBoard}
-      onboardmenu={showBoardMenu}
-      {tagItems}
-      {untaggedCount}
-      {filterTags}
-      {filterUntagged}
-      bind:tagSearch
-      bind:renamingTagId
-      ontagclick={onTagClick}
-      ontagrename={renameTag}
-      ontagmenu={showTagMenu}
-    />
-  {/if}
-
-  <main>
-    <header class="toolbar">
+  <!-- The toolbar spans the whole window; the sidebar and the images sit side by side below it. -->
+  <header class="toolbar">
+    <!-- Above the sidebar (and as wide as it, so the rest of the toolbar starts over the images). -->
+    <div class="corner" class:wide={!settings.sidebarCollapsed}>
       <button
         class="icon"
         class:on={!settings.sidebarCollapsed}
@@ -961,100 +932,6 @@
           <path d="M6 2.5v11" stroke="currentColor" stroke-width="1.2" />
         </svg>
       </button>
-
-      {#if active && activeBoard}
-        <button onclick={closeBoard} title="Back to the workspace's images (mouse back button)">← Images</button>
-        <div class="title" title="A board in {active.name}">
-          <span class="name">{activeBoard.name}</span>
-          <span class="path">board in {active.name}</span>
-        </div>
-        <div class="group board-actions">
-          <button onclick={() => boardCanvas?.addNote()} title="Add a text note (or double-click empty space)">Add note</button>
-          <button onclick={() => boardCanvas?.arrangeItems()} title="Tidy the selected items (or everything) into neat rows">Arrange</button>
-          <button onclick={() => boardCanvas?.fit()} title="Zoom to show everything (F)">Fit</button>
-        </div>
-        <span class="zoom">{Math.round(boardZoom * 100)}%</span>
-      {:else}
-      {#if active}
-        <div class="title" title={active.path}>
-          <span class="name">{active.name}</span>
-          <span class="path">{active.path}</span>
-        </div>
-        <button onclick={refresh} title="Rescan the folder for new or removed images">Refresh</button>
-      {/if}
-
-      <label class="check" title="Also show images inside subfolders of this workspace's folder">
-        <input type="checkbox" checked={active?.recursive ?? false} disabled={!active} onchange={toggleRecursive} />
-        Subfolders
-      </label>
-
-      <div class="group">
-        <select value={settings.sortKey} onchange={(e) => setSort(e.currentTarget.value as SortKey)} title="Sort by">
-          <option value="name">Name</option>
-          <option value="modified">Date modified</option>
-          <option value="size">File size</option>
-        </select>
-        <button
-          onclick={toggleSortDirection}
-          title={settings.sortAscending ? "Ascending" : "Descending"}
-          aria-label="Toggle sort direction">{settings.sortAscending ? "↑" : "↓"}</button
-        >
-      </div>
-
-      <div class="group" role="radiogroup" aria-label="Layout">
-        <button
-          class="icon"
-          class:on={settings.layout === "masonry"}
-          onclick={() => (settings.layout = "masonry")}
-          title="Masonry: tiles shaped like their images"
-          aria-label="Masonry layout"
-          role="radio"
-          aria-checked={settings.layout === "masonry"}
-        >
-          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-            <rect x="1.5" y="1.5" width="5.5" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
-            <rect x="1.5" y="10.5" width="5.5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
-            <rect x="9" y="1.5" width="5.5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
-            <rect x="9" y="7.5" width="5.5" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
-          </svg>
-        </button>
-        <button
-          class="icon"
-          class:on={settings.layout === "grid"}
-          onclick={() => (settings.layout = "grid")}
-          title="Grid: square tiles in rows"
-          aria-label="Grid layout"
-          role="radio"
-          aria-checked={settings.layout === "grid"}
-        >
-          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-            <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
-            <rect x="9" y="1.5" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
-            <rect x="1.5" y="9" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
-            <rect x="9" y="9" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
-          </svg>
-        </button>
-      </div>
-
-      {#if settings.layout === "grid"}
-        <div class="group">
-          <button class:on={settings.tileFit === "cover"} onclick={() => (settings.tileFit = "cover")} title="Crop thumbnails to fill the tiles">Fill</button>
-          <button class:on={settings.tileFit === "contain"} onclick={() => (settings.tileFit = "contain")} title="Show whole images">Whole</button>
-        </div>
-      {/if}
-
-      <input
-        class="size"
-        type="range"
-        min="80"
-        max="400"
-        step="10"
-        bind:value={settings.tileSize}
-        title="Thumbnail size"
-        aria-label="Thumbnail size"
-      />
-      {/if}
-
       <button class="icon" onclick={() => (settingsOpen = true)} title="Settings" aria-label="Settings">
         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
           <circle cx="8" cy="8" r="2.2" fill="none" stroke="currentColor" stroke-width="1.2" />
@@ -1066,143 +943,271 @@
           />
         </svg>
       </button>
-    </header>
-
-    {#if error}
-      <div class="notice error">
-        {error}
-        <button onclick={() => (error = null)}>Dismiss</button>
-      </div>
-    {/if}
-
-    {#if active && filtering && !activeBoard}
-      <div class="filter-bar">
-        <span>
-          Showing {filtered.length.toLocaleString()} of {images.length.toLocaleString()} images
-          {#if filterUntagged}without tags{:else}tagged{/if}
-        </span>
-        {#each [...filterTags] as id (id)}
-          {@const tag = tags.byId.get(id)}
-          <button
-            class="filter-chip"
-            style:--tag={colorHex(tag?.color)}
-            style:--tag-bg={colorTint(tag?.color, 0.3)}
-            onclick={() => onTagClick(id, true)}
-            title="Remove from the filter"
-          >
-            #{tag?.name ?? "?"} <span aria-hidden="true">✕</span>
-          </button>
-        {/each}
-        <button class="link" onclick={clearFilter}>Clear filter</button>
-      </div>
-    {/if}
+    </div>
 
     {#if active && activeBoard}
-      {#key activeBoard.id}
-        <BoardCanvas
-          bind:this={boardCanvas}
-          bind:zoom={boardZoom}
-          boardId={activeBoard.id}
-          {images}
-          active={viewing === null && menu === null && editor === null && !settingsOpen}
-          onopen={openViewerOnBoard}
-          onmenu={(request) => (menu = request)}
-          oncount={(imageCount, notes) => {
-            boardCounts = { images: imageCount, notes };
-            if (activeBoardId !== null) boards.setCount(activeBoardId, imageCount);
-          }}
-          onerror={(message) => (error = message)}
-        />
-      {/key}
-    {:else if active && filtered.length > 0}
-      {#key gridKey}
-        <Grid
-          bind:this={grid}
-          images={filtered}
-          mode={settings.layout}
-          tileSize={settings.tileSize}
-          tileFit={settings.tileFit}
-          showTags={settings.showTileTags}
-          showNames={settings.showTileNames}
-          {selection}
-          bind:focus={() => focus, (i) => (focusPath = filtered[i]?.path ?? null)}
-          active={viewing === null && menu === null && editor === null && !settingsOpen}
-          initialTopIndex={viewState.get(active.id)?.topIndex ?? 0}
-          tagsOf={(path) => tags.of(path)}
-          onopen={(i) => (viewing = i)}
-          onitemmenu={showImageMenu}
-          ondragmove={(x, y) => (dropBoardId = boardUnder(x, y))}
-          ondragend={(x, y, paths) => {
-            const target = boardUnder(x, y);
-            dropBoardId = null;
-            if (paths && target !== null) addImagesToBoard(target, paths);
-          }}
-        />
-      {/key}
+      <button onclick={closeBoard} title="Back to the workspace's images (mouse back button)">← Images</button>
+      <div class="title" title="A board in {active.name}">
+        <span class="name">{activeBoard.name}</span>
+        <span class="path">board in {active.name}</span>
+      </div>
+      <div class="group board-actions">
+        <button onclick={() => boardCanvas?.addNote()} title="Add a text note (or double-click empty space)">Add note</button>
+        <button onclick={() => boardCanvas?.arrangeItems()} title="Tidy the selected items (or everything) into neat rows">Arrange</button>
+        <button onclick={() => boardCanvas?.fit()} title="Zoom to show everything (F)">Fit</button>
+      </div>
+      <span class="zoom">{Math.round(boardZoom * 100)}%</span>
     {:else}
-      <div class="empty">
-        {#if !ready}
-          <!-- starting up -->
-        {:else if !active}
-          <h1>Reference Library</h1>
-          <p>Make a workspace for each collection of references, like <em>Art inspiration</em> or <em>Home interiors</em>.</p>
-          <p>Each workspace shows the images from its own folder.</p>
-          <button class="primary big" onclick={addWorkspaceFromDialog}>Add a workspace…</button>
-          {#if canDropFolders}<p class="hint">…or drag a folder onto this window.</p>{/if}
-        {:else if scanError}
-          <h2>Can't open “{active.name}”</h2>
-          <p>The folder may have been moved or renamed, or it's on a drive that isn't connected.</p>
-          <p class="hint path-line">{active.path}</p>
-          <div class="actions">
-            <button class="primary" onclick={() => changeFolder(active)}>Choose its folder…</button>
-            <button onclick={refresh}>Try again</button>
-            <button onclick={() => removeWorkspace(active)}>Remove workspace…</button>
-          </div>
-        {:else if loading && images.length === 0}
-          <p>Scanning folder…</p>
-        {:else if filtering && images.length > 0}
-          <p>{filterUntagged ? "Every image here has tags." : "No images have all of these tags."}</p>
-          <button onclick={clearFilter}>Clear filter</button>
-        {:else}
-          <p>No images found in <strong>{active.name}</strong>.</p>
-          {#if !active.recursive}
-            <p class="hint">Tip: tick “Subfolders” to include images in folders inside it.</p>
-          {/if}
-        {/if}
+    {#if active}
+      <div class="title" title={active.path}>
+        <span class="name">{active.name}</span>
+        <span class="path">{active.path}</span>
+      </div>
+      <button onclick={refresh} title="Rescan the folder for new or removed images">Refresh</button>
+    {/if}
+
+    <label class="check" title="Also show images inside subfolders of this workspace's folder">
+      <input type="checkbox" checked={active?.recursive ?? false} disabled={!active} onchange={toggleRecursive} />
+      Subfolders
+    </label>
+
+    <div class="group">
+      <select value={settings.sortKey} onchange={(e) => setSort(e.currentTarget.value as SortKey)} title="Sort by">
+        <option value="name">Name</option>
+        <option value="modified">Date modified</option>
+        <option value="size">File size</option>
+      </select>
+      <button
+        onclick={toggleSortDirection}
+        title={settings.sortAscending ? "Ascending" : "Descending"}
+        aria-label="Toggle sort direction">{settings.sortAscending ? "↑" : "↓"}</button
+      >
+    </div>
+
+    <div class="group" role="radiogroup" aria-label="Layout">
+      <button
+        class="icon"
+        class:on={settings.layout === "masonry"}
+        onclick={() => (settings.layout = "masonry")}
+        title="Masonry: tiles shaped like their images"
+        aria-label="Masonry layout"
+        role="radio"
+        aria-checked={settings.layout === "masonry"}
+      >
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+          <rect x="1.5" y="1.5" width="5.5" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+          <rect x="1.5" y="10.5" width="5.5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+          <rect x="9" y="1.5" width="5.5" height="4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+          <rect x="9" y="7.5" width="5.5" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+        </svg>
+      </button>
+      <button
+        class="icon"
+        class:on={settings.layout === "grid"}
+        onclick={() => (settings.layout = "grid")}
+        title="Grid: square tiles in rows"
+        aria-label="Grid layout"
+        role="radio"
+        aria-checked={settings.layout === "grid"}
+      >
+        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+          <rect x="1.5" y="1.5" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+          <rect x="9" y="1.5" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+          <rect x="1.5" y="9" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+          <rect x="9" y="9" width="5.5" height="5.5" rx="1" fill="none" stroke="currentColor" stroke-width="1.2" />
+        </svg>
+      </button>
+    </div>
+
+    {#if settings.layout === "grid"}
+      <div class="group">
+        <button class:on={settings.tileFit === "cover"} onclick={() => (settings.tileFit = "cover")} title="Crop thumbnails to fill the tiles">Fill</button>
+        <button class:on={settings.tileFit === "contain"} onclick={() => (settings.tileFit = "contain")} title="Show whole images">Whole</button>
       </div>
     {/if}
 
-    <footer class="status">
-      {#if active && activeBoard}
-        <span>
-          {boardCounts.images === 1 ? "1 image" : `${boardCounts.images} images`}{boardCounts.notes
-            ? ` · ${boardCounts.notes === 1 ? "1 note" : `${boardCounts.notes} notes`}`
-            : ""}
-        </span>
-        {#if notice}<span class="notice-text">{notice}</span>{/if}
-        <span class="dim right">Drag empty space to move · scroll to zoom · Shift+drag to select · double-click for a note</span>
-      {:else if active && !scanError}
-        <span>{filtered.length.toLocaleString()} images{loading ? " · scanning…" : ""}</span>
-        {#if notice}
-          <span class="notice-text">{notice}</span>
-        {:else if selection.size > 1}
-          <span>{selection.size.toLocaleString()} selected</span>
-        {:else if focus >= 0}
-          <span class="dim">{filtered[focus].name}</span>
-          {#if tags.idsOf(filtered[focus].path).length}
-            <span class="status-tags">{tags.namesOf(filtered[focus].path).join(" · ")}</span>
-          {/if}
-        {/if}
-        <span class="dim right">{tagKey} to tag · {primaryKeyLabel}/Shift+click to select several · double-click to view</span>
-      {/if}
-    </footer>
-
-    {#if dropTarget}
-      <!-- Over the images (or board) it would go to; for a workspace or board in the sidebar,
-           that item lights up instead and only the label shows. -->
-      <div class="drop" class:whole={dropTarget.kind === "main"}><span>{dropLabel}</span></div>
+    <input
+      class="size"
+      type="range"
+      min="80"
+      max="400"
+      step="10"
+      bind:value={settings.tileSize}
+      title="Thumbnail size"
+      aria-label="Thumbnail size"
+    />
     {/if}
-  </main>
+  </header>
+
+  <div class="body">
+    {#if !settings.sidebarCollapsed}
+      <Sidebar
+        workspaces={workspaces.list}
+        {activeId}
+        {missing}
+        bind:renamingId
+        onselect={openWorkspace}
+        onadd={addWorkspaceFromDialog}
+        onrename={renameWorkspace}
+        onmenu={showWorkspaceMenu}
+        boards={boards.list}
+        {activeBoardId}
+        bind:renamingBoardId
+        dropBoardId={dropBoardId ?? (dropTarget?.kind === "board" ? dropTarget.id : null)}
+        dropWorkspaceId={dropTarget?.kind === "workspace" ? dropTarget.id : null}
+        onboardselect={openBoard}
+        onboardadd={newBoard}
+        onboardrename={renameBoard}
+        onboardmenu={showBoardMenu}
+        {tagItems}
+        {untaggedCount}
+        {filterTags}
+        {filterUntagged}
+        bind:tagSearch
+        bind:renamingTagId
+        ontagclick={onTagClick}
+        ontagrename={renameTag}
+        ontagmenu={showTagMenu}
+      />
+    {/if}
+
+    <main>
+      {#if error}
+        <div class="notice error">
+          {error}
+          <button onclick={() => (error = null)}>Dismiss</button>
+        </div>
+      {/if}
+
+      {#if active && filtering && !activeBoard}
+        <div class="filter-bar">
+          <span>
+            Showing {filtered.length.toLocaleString()} of {images.length.toLocaleString()} images
+            {#if filterUntagged}without tags{:else}tagged{/if}
+          </span>
+          {#each [...filterTags] as id (id)}
+            {@const tag = tags.byId.get(id)}
+            <button
+              class="filter-chip"
+              style:--tag={colorHex(tag?.color)}
+              style:--tag-bg={colorTint(tag?.color, 0.3)}
+              onclick={() => onTagClick(id, true)}
+              title="Remove from the filter"
+            >
+              #{tag?.name ?? "?"} <span aria-hidden="true">✕</span>
+            </button>
+          {/each}
+          <button class="link" onclick={clearFilter}>Clear filter</button>
+        </div>
+      {/if}
+
+      {#if active && activeBoard}
+        {#key activeBoard.id}
+          <BoardCanvas
+            bind:this={boardCanvas}
+            bind:zoom={boardZoom}
+            boardId={activeBoard.id}
+            {images}
+            active={viewing === null && menu === null && editor === null && !settingsOpen}
+            onopen={openViewerOnBoard}
+            onmenu={(request) => (menu = request)}
+            oncount={(imageCount, notes) => {
+              boardCounts = { images: imageCount, notes };
+              if (activeBoardId !== null) boards.setCount(activeBoardId, imageCount);
+            }}
+            onerror={(message) => (error = message)}
+          />
+        {/key}
+      {:else if active && filtered.length > 0}
+        {#key gridKey}
+          <Grid
+            bind:this={grid}
+            images={filtered}
+            mode={settings.layout}
+            tileSize={settings.tileSize}
+            tileFit={settings.tileFit}
+            showTags={settings.showTileTags}
+            showNames={settings.showTileNames}
+            {selection}
+            bind:focus={() => focus, (i) => (focusPath = filtered[i]?.path ?? null)}
+            active={viewing === null && menu === null && editor === null && !settingsOpen}
+            initialTopIndex={viewState.get(active.id)?.topIndex ?? 0}
+            tagsOf={(path) => tags.of(path)}
+            onopen={(i) => (viewing = i)}
+            onitemmenu={showImageMenu}
+            ondragmove={(x, y) => (dropBoardId = boardUnder(x, y))}
+            ondragend={(x, y, paths) => {
+              const target = boardUnder(x, y);
+              dropBoardId = null;
+              if (paths && target !== null) addImagesToBoard(target, paths);
+            }}
+          />
+        {/key}
+      {:else}
+        <div class="empty">
+          {#if !ready}
+            <!-- starting up -->
+          {:else if !active}
+            <h1>Reference Library</h1>
+            <p>Make a workspace for each collection of references, like <em>Art inspiration</em> or <em>Home interiors</em>.</p>
+            <p>Each workspace shows the images from its own folder.</p>
+            <button class="primary big" onclick={addWorkspaceFromDialog}>Add a workspace…</button>
+            {#if canDropFolders}<p class="hint">…or drag a folder onto this window.</p>{/if}
+          {:else if scanError}
+            <h2>Can't open “{active.name}”</h2>
+            <p>The folder may have been moved or renamed, or it's on a drive that isn't connected.</p>
+            <p class="hint path-line">{active.path}</p>
+            <div class="actions">
+              <button class="primary" onclick={() => changeFolder(active)}>Choose its folder…</button>
+              <button onclick={refresh}>Try again</button>
+              <button onclick={() => removeWorkspace(active)}>Remove workspace…</button>
+            </div>
+          {:else if loading && images.length === 0}
+            <p>Scanning folder…</p>
+          {:else if filtering && images.length > 0}
+            <p>{filterUntagged ? "Every image here has tags." : "No images have all of these tags."}</p>
+            <button onclick={clearFilter}>Clear filter</button>
+          {:else}
+            <p>No images found in <strong>{active.name}</strong>.</p>
+            {#if !active.recursive}
+              <p class="hint">Tip: tick “Subfolders” to include images in folders inside it.</p>
+            {/if}
+          {/if}
+        </div>
+      {/if}
+
+      <footer class="status">
+        {#if active && activeBoard}
+          <span>
+            {boardCounts.images === 1 ? "1 image" : `${boardCounts.images} images`}{boardCounts.notes
+              ? ` · ${boardCounts.notes === 1 ? "1 note" : `${boardCounts.notes} notes`}`
+              : ""}
+          </span>
+          {#if notice}<span class="notice-text">{notice}</span>{/if}
+          <span class="dim right">Drag empty space to move · scroll to zoom · Shift+drag to select · double-click for a note</span>
+        {:else if active && !scanError}
+          <span>{filtered.length.toLocaleString()} images{loading ? " · scanning…" : ""}</span>
+          {#if notice}
+            <span class="notice-text">{notice}</span>
+          {:else if selection.size > 1}
+            <span>{selection.size.toLocaleString()} selected</span>
+          {:else if focus >= 0}
+            <span class="dim">{filtered[focus].name}</span>
+            {#if tags.idsOf(filtered[focus].path).length}
+              <span class="status-tags">{tags.namesOf(filtered[focus].path).join(" · ")}</span>
+            {/if}
+          {/if}
+          <span class="dim right">{tagKey} to tag · {primaryKeyLabel}/Shift+click to select several · double-click to view</span>
+        {/if}
+      </footer>
+
+      {#if dropTarget}
+        <!-- Over the images (or board) it would go to; for a workspace or board in the sidebar,
+             that item lights up instead and only the label shows. -->
+        <div class="drop" class:whole={dropTarget.kind === "main"}><span>{dropLabel}</span></div>
+      {/if}
+    </main>
+  </div>
 </div>
 
 {#if viewing !== null && viewerImages[viewing]}
@@ -1241,7 +1246,13 @@
 <style>
   .app {
     display: flex;
+    flex-direction: column;
     height: 100vh;
+  }
+  .body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
   }
   main {
     position: relative;
@@ -1264,6 +1275,16 @@
   .toolbar > .group {
     flex-shrink: 0;
     white-space: nowrap;
+  }
+  .corner {
+    display: flex;
+    flex-shrink: 0;
+    gap: 2px;
+  }
+  /* With the sidebar showing, the corner plus the toolbar's gap ends 12px past the sidebar's edge,
+     so the workspace name lines up with the images below (which are 12px in from it as well). */
+  .corner.wide {
+    width: calc(var(--sidebar-width) - 10px);
   }
   .icon {
     display: grid;

@@ -65,7 +65,7 @@ and the app says *Finder* where it says *Explorer* here.
   - *← Images*, clicking the workspace, or the mouse back button returns to the grid.
 - **Layout** (toolbar): *Masonry* shows tiles shaped like their images, in columns; *Grid* shows
   square tiles in rows, where **Fill / Whole** switches between cropped and whole images.
-- **Settings** (the gear button) has switches for showing tags and file names on thumbnails.
+- **Settings** (the gear button at the top left, next to the sidebar button) has switches for showing tags and file names on thumbnails.
   Tags are shown and names hidden by default; the focused image's name is always in the status bar.
 
 Workspaces and tags are stored in an SQLite database, `library.db`, in the app's data folder:

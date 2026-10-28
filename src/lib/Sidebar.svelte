@@ -360,7 +360,7 @@
 
 <style>
   .sidebar {
-    width: 220px;
+    width: var(--sidebar-width);
     flex-shrink: 0;
     overflow-y: auto;
     padding: 8px 6px;
