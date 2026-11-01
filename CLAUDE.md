@@ -49,7 +49,8 @@ explain *why*, in plain English, at the level of the surrounding code).
   Build URLs with the helpers in `src/lib/api.ts`, never by hand.
 - **Data lives in three places:**
   - the library database (`library.db`, app data folder): workspaces, tags, boards; real data, with
-    migrations and tests;
+    migrations and tests. `backup.rs` keeps copies in `backups/` next to it (`VACUUM INTO`): one a
+    day for 7 days, and one before each upgrade, kept for good;
   - caches (app cache folder): thumbnails and `sizes.db`; safe to delete, rebuilt on demand;
   - `localStorage` (`settings.svelte.ts`): per-device UI preferences only (layout, tile size, tag
     shortcut, last workspace). Never put library data there.
@@ -119,7 +120,9 @@ Schema changes are numbered entries in `MIGRATIONS` (6 so far), only ever added 
 edit an existing one, since installed copies have already run it. Foreign keys are switched off while
 migrating (rebuilding a table would otherwise delete everything linked to it) and each step is
 checked with `pragma_foreign_key_check` before it is saved. Add a test for every migration that
-starts from the previous version's data.
+starts from the previous version's data. A library with steps this version doesn't know (made by a
+newer version) is refused and left alone. If the app can't start (`start_up` in `lib.rs`), it says
+why in a message box and quits.
 
 Images get a record in the `images` table when they're tagged or put on a board (`image_record`);
 tags and board items point at that record, so both follow renamed files. `reconcile` only forgets
@@ -160,7 +163,15 @@ Any change to this logic needs tests in `library.rs` (they use real temp files).
 - Destructive actions confirm first with the dialog plugin's `ask()`, and the text says what is and
   isn't affected ("The images themselves are not touched").
 - Keyboard shortcuts: check `RESERVED_KEYS` in `settings.svelte.ts` before adding a key, and add new
-  single-key shortcuts there, so the user can't pick it as the tag shortcut.
+  single-key shortcuts there, so the user can't pick it as the tag shortcut. The web view's own
+  shortcuts (reload, find, print, …) are blocked by `isBrowserShortcut` in `platform.ts`; to use one
+  of those keys, handle it in the page's `onkeydowncapture`.
+- Toolbar controls that keep the keyboard (slider, checkbox, list) call `letGoOfKeyboard` after being
+  used with the mouse, so arrow keys and the tag shortcut go back to the grid.
+- Board changes are undoable: call `remember()` (or `rememberIfChanged(before)`) in `Board.svelte`
+  before changing items. The history lasts until the board is closed.
+- A board's images come from `board_files` (looked up directly), not the workspace's scan, which
+  doesn't list images in subfolders with "Subfolders" off.
 - Dragging inside the app (tiles onto a board) uses plain pointer events, not HTML5 drag-and-drop:
   HTML5 drag events on the window mean "something dropped in from another app" (see Drops above),
   and the page ignores HTML5 drags that start inside it. Find the drop target with

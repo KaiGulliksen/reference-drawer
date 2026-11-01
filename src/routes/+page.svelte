@@ -35,6 +35,8 @@
     fileManagerName,
     hasOtherModifier,
     hasPrimaryModifier,
+    isBrowserShortcut,
+    isRefreshShortcut,
     pathKey,
     primaryKeyLabel,
     shortcutLabel,
@@ -71,6 +73,8 @@
   const activeBoard = $derived(boards.list.find((b) => b.id === activeBoardId) ?? null);
   let boardCanvas = $state<BoardCanvas | undefined>();
   let boardZoom = $state(1);
+  let boardCanUndo = $state(false);
+  let boardCanRedo = $state(false);
   let boardCounts = $state({ images: 0, notes: 0 });
   let renamingBoardId = $state<number | null>(null);
   /** The board in the sidebar that images are being dragged over. */
@@ -511,9 +515,9 @@
     return el ? Number(el.dataset.boardDrop) : null;
   }
 
-  function openViewerOnBoard(paths: string[], index: number) {
-    viewerList = paths.map((path) => imagesByPath.get(pathKey(path))).filter((image): image is ImageEntry => !!image);
-    viewing = Math.min(index, viewerList.length - 1);
+  function openViewerOnBoard(boardImages: ImageEntry[], index: number) {
+    viewerList = boardImages;
+    viewing = index;
   }
 
   function openTagEditor(paths: string[]) {
@@ -891,6 +895,25 @@
     }
   }
 
+  // Clicking the size slider, Subfolders or the sort list leaves the keyboard on that control, so
+  // the arrow keys would go on changing it, and the tag shortcut wouldn't work, until you clicked
+  // an image. So they let go of the keyboard after being used with the mouse. Someone who reached
+  // them with Tab is using the keyboard on purpose, so they keep it.
+  let usingPointer = true;
+
+  function letGoOfKeyboard(e: Event) {
+    if (usingPointer) (e.currentTarget as HTMLElement).blur();
+  }
+
+  // Seen first, before anything else gets the key: even with a dialog open, the web view
+  // shouldn't reload the page or open its find bar (see isBrowserShortcut).
+  function onkeydowncapture(e: KeyboardEvent) {
+    if (e.key === "Tab") usingPointer = false;
+    if (!isBrowserShortcut(e)) return;
+    e.preventDefault();
+    if (isRefreshShortcut(e) && !e.repeat && viewing === null && !editor && !settingsOpen && !menu) refresh();
+  }
+
   function onkeydown(e: KeyboardEvent) {
     if (editor || settingsOpen || menu) return;
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
@@ -1005,7 +1028,7 @@
   });
 </script>
 
-<svelte:window {onkeydown} {onmousedown} {onmouseup} />
+<svelte:window {onkeydown} {onkeydowncapture} {onmousedown} {onmouseup} onpointerdowncapture={() => (usingPointer = true)} />
 
 <div class="app">
   <!-- The toolbar spans the whole window; the sidebar and the images sit side by side below it. -->
@@ -1044,6 +1067,10 @@
         <span class="path">board in {active.name}</span>
       </div>
       <div class="group board-actions">
+        <button disabled={!boardCanUndo} onclick={() => boardCanvas?.undo()} title="Undo ({shortcutLabel('Z')})">Undo</button>
+        <button disabled={!boardCanRedo} onclick={() => boardCanvas?.redo()} title="Redo ({shortcutLabel('Y')})">Redo</button>
+      </div>
+      <div class="group">
         <button onclick={() => boardCanvas?.addNote()} title="Add a text note (or double-click empty space)">Add note</button>
         <button onclick={() => boardCanvas?.arrangeItems()} title="Tidy the selected items (or everything) into neat rows">Arrange</button>
         <button onclick={() => boardCanvas?.fit()} title="Zoom to show everything (F)">Fit</button>
@@ -1055,16 +1082,32 @@
         <span class="name">{active.name}</span>
         <span class="path">{active.path}</span>
       </div>
-      <button onclick={refresh} title="Rescan the folder for new or removed images">Refresh</button>
+      <button onclick={refresh} title="Rescan the folder for new or removed images (F5)">Refresh</button>
     {/if}
 
     <label class="check" title="Also show images inside subfolders of this workspace's folder">
-      <input type="checkbox" checked={active?.recursive ?? false} disabled={!active} onchange={toggleRecursive} />
+      <input
+        type="checkbox"
+        checked={active?.recursive ?? false}
+        disabled={!active}
+        onchange={(e) => {
+          letGoOfKeyboard(e);
+          toggleRecursive();
+        }}
+      />
       Subfolders
     </label>
 
     <div class="group">
-      <select value={settings.sortKey} onchange={(e) => setSort(e.currentTarget.value as SortKey)} title="Sort by">
+      <select
+        value={settings.sortKey}
+        onchange={(e) => {
+          setSort(e.currentTarget.value as SortKey);
+          letGoOfKeyboard(e);
+        }}
+        oncancel={letGoOfKeyboard}
+        title="Sort by"
+      >
         <option value="name">Name</option>
         <option value="modified">Date modified</option>
         <option value="size">File size</option>
@@ -1125,6 +1168,7 @@
       max="400"
       step="10"
       bind:value={settings.tileSize}
+      onpointerup={letGoOfKeyboard}
       title="Thumbnail size"
       aria-label="Thumbnail size"
     />
@@ -1198,6 +1242,8 @@
           <BoardCanvas
             bind:this={boardCanvas}
             bind:zoom={boardZoom}
+            bind:canUndo={boardCanUndo}
+            bind:canRedo={boardCanRedo}
             boardId={activeBoard.id}
             {images}
             active={viewing === null && menu === null && editor === null && !settingsOpen}
@@ -1439,6 +1485,12 @@
   }
   .board-actions {
     margin-left: auto;
+  }
+  .board-actions button:disabled {
+    color: var(--text-dim);
+    background: transparent;
+    cursor: default;
+    opacity: 0.6;
   }
   .zoom {
     min-width: 44px;

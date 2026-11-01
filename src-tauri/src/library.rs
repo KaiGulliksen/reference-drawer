@@ -10,6 +10,7 @@
 //! The file is the same on every system: image locations inside a workspace are
 //! stored with `/` between folders, whatever the system itself uses.
 
+use crate::backup;
 use crate::identity::fingerprint;
 use crate::parallel;
 use crate::platform::{PATHS_IGNORE_CASE, path_key};
@@ -188,11 +189,25 @@ impl Library {
         if let Some(dir) = file.parent() {
             fs::create_dir_all(dir).map_err(err)?;
         }
-        let mut conn = Connection::open(file).map_err(err)?;
-        conn.pragma_update(None, "journal_mode", "WAL").map_err(err)?;
+        // Shown to the user if the app can't start, so it says what the technical part is about.
+        let unreadable = |e: rusqlite::Error| format!("The library file couldn't be opened; it may be damaged. ({e})");
+        let mut conn = Connection::open(file).map_err(unreadable)?;
+        conn.pragma_update(None, "journal_mode", "WAL").map_err(unreadable)?;
         // Links between tables are only enforced after upgrading: while a table is rebuilt,
         // enforcing them would delete everything linked to the old copy of it.
         conn.pragma_update(None, "foreign_keys", false).map_err(err)?;
+        let applied: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).map_err(err)?;
+        // Saved by a newer version of the app: this one doesn't know what the newer steps did, so
+        // leave it alone rather than risk damaging it.
+        if applied > MIGRATIONS.len() as i64 {
+            return Err("The library was last used by a newer version of Reference Library. Please install the latest version.".into());
+        }
+        // A library that's about to be upgraded gets a safety copy first. Without one the upgrade
+        // doesn't go ahead: nothing has changed at that point, so nothing is lost by stopping.
+        if applied > 0 && applied < MIGRATIONS.len() as i64 {
+            backup::before_upgrade(&conn, file, applied)
+                .map_err(|e| format!("Couldn't make a safety copy of the library before upgrading it: {e}"))?;
+        }
         migrate(&mut conn)?;
         conn.pragma_update(None, "foreign_keys", true).map_err(err)?;
         Ok(Self { conn: Mutex::new(conn) })
@@ -1144,6 +1159,28 @@ mod tests {
     }
 
     #[test]
+    fn a_library_from_a_newer_version_is_left_alone() {
+        let dir = std::env::temp_dir().join(format!("reflib-test-newer-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("library.db");
+        let newer = MIGRATIONS.len() as i64 + 1;
+        Connection::open(&file).unwrap().pragma_update(None, "user_version", newer).unwrap();
+
+        let problem = Library::open(&file).err().expect("it shouldn't open");
+        assert!(problem.contains("newer version"), "{problem}");
+        let version: i64 =
+            Connection::open(&file).unwrap().pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(version, newer);
+    }
+
+    #[test]
+    fn a_brand_new_library_has_nothing_to_back_up_first() {
+        let (_, _, images) = setup("new-no-backup");
+        assert!(!images.parent().unwrap().join("backups").exists());
+    }
+
+    #[test]
     fn upgrading_a_library_from_before_colours_keeps_everything() {
         // A library as version 0.8.0 left it (5 schema steps), with a workspace, a tag and a board.
         let dir = std::env::temp_dir().join(format!("reflib-test-upgrade-colors-{}", std::process::id()));
@@ -1173,6 +1210,13 @@ mod tests {
         }
 
         let lib = Library::open(&file).unwrap();
+
+        // The safety copy is the library as it was: still at step 5, with its data.
+        let copy = Connection::open(dir.join("backups").join("library-before-upgrade-from-step-5.db")).unwrap();
+        let version: i64 = copy.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        let tagged: i64 = copy.query_row("SELECT COUNT(*) FROM image_tags", [], |r| r.get(0)).unwrap();
+        assert_eq!((version, tagged), (5, 1));
+
         let ws = lib.workspace(1).unwrap();
         assert_eq!((ws.name.as_str(), ws.color), ("Art", None));
         let data = lib.tag_data(1).unwrap();

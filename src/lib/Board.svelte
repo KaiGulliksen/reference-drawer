@@ -6,7 +6,8 @@
   Shift+drag to select with a box, drag an image to move it (and everything selected with it),
   drag the corner handles to resize. Double-click an image to view it full size, a note to edit
   it, or empty space to add a note. Keys: Delete removes from the board, F fits everything,
-  Ctrl+A (⌘A) selects all, Esc clears the selection.
+  Ctrl+A (⌘A) selects all, Ctrl+Z / Ctrl+Y (⌘Z / ⌘Y, or with Shift) undo and redo, Esc clears the
+  selection.
 
   Images load at the resolution they're shown at: thumbnails when small, then a screen-sized
   preview, and the original only for images on screen and zoomed in close.
@@ -16,11 +17,13 @@
   import { SvelteSet } from "svelte/reactivity";
   import {
     addBoardNote,
+    boardFiles,
     fullUrl,
     getBoard,
     previewSizeForScreen,
     previewUrl,
     removeBoardItems,
+    restoreBoardItems,
     setBoardView,
     THUMB_SIZE,
     thumbUrl,
@@ -46,21 +49,35 @@
 
   interface Props {
     boardId: number;
-    /** The workspace's images (from the folder scan), to find each board image's details. */
+    /** The workspace's images (from the folder scan). When this changes, the folder has changed. */
     images: ImageEntry[];
     /** False while something (a menu, a dialog, the viewer) is open on top, so keys go there. */
     active: boolean;
     /** Current zoom, for showing in the toolbar. */
     zoom?: number;
+    /** Whether there's something to undo or redo, for the toolbar's buttons. */
+    canUndo?: boolean;
+    canRedo?: boolean;
     /** Open the viewer on these board images, starting at `index`. */
-    onopen: (paths: string[], index: number) => void;
+    onopen: (images: ImageEntry[], index: number) => void;
     onmenu: (menu: MenuRequest) => void;
     /** Called whenever the number of images or notes on the board changes. */
     oncount: (images: number, notes: number) => void;
     onerror: (message: string) => void;
   }
 
-  let { boardId, images, active, zoom = $bindable(1), onopen, onmenu, oncount, onerror }: Props = $props();
+  let {
+    boardId,
+    images,
+    active,
+    zoom = $bindable(1),
+    canUndo = $bindable(false),
+    canRedo = $bindable(false),
+    onopen,
+    onmenu,
+    oncount,
+    onerror,
+  }: Props = $props();
 
   const MIN_ZOOM = 0.03;
   const MAX_ZOOM = 16;
@@ -69,6 +86,8 @@
   /** Smallest size an image can be resized to, in board units. */
   const MIN_SIZE = 24;
   const MIN_CROP = 0.04;
+  /** How long after the last key press a note being typed is saved. */
+  const NOTE_SAVE_DELAY_MS = 250;
   const dpr = window.devicePixelRatio || 1;
   const previewSize = previewSizeForScreen();
 
@@ -94,7 +113,7 @@
   type Drag =
     | { kind: "pan"; startX: number; startY: number; viewX: number; viewY: number; moved: boolean }
     | { kind: "move"; startX: number; startY: number; starts: Map<number, { x: number; y: number }>; moved: boolean }
-    | { kind: "resize"; fixed: { x: number; y: number }; box: Rect; starts: Map<number, Rect>; free: boolean }
+    | { kind: "resize"; fixed: { x: number; y: number }; box: Rect; starts: Map<number, Rect>; free: boolean; moved: boolean }
     | { kind: "marquee"; startX: number; startY: number; base: number[] }
     | { kind: "crop"; handle: string; startX: number; startY: number; start: Crop };
   let drag: Drag | null = null;
@@ -102,7 +121,8 @@
   /** Items changed by the current drag (moved, resized, brought to front), saved when it ends. */
   const dirty = new Set<number>();
 
-  const entries = $derived(new Map(images.map((image) => [pathKey(image.path), image])));
+  /** The board's image files that are really on disk, by `pathKey`. */
+  let files = $state.raw(new Map<string, ImageEntry>());
   const ordered = $derived([...items].sort((a, b) => a.z - b.z || a.id - b.id));
   const selectedItems = $derived(items.filter((item) => selected.has(item.id)));
   const selectionBox = $derived(selectedItems.length > 0 ? bounds(selectedItems) : null);
@@ -119,7 +139,12 @@
 
   async function load() {
     const data = await getBoard(boardId);
-    items = data.items;
+    await loadFiles();
+    // A new note is saved before anything is typed in it, so closing the app at that moment leaves
+    // an empty one behind. It holds nothing and can't be seen well, so tidy it away here.
+    const empty = data.items.filter((item) => item.path === null && !item.text?.trim()).map((item) => item.id);
+    if (empty.length > 0) await removeBoardItems(boardId, empty);
+    items = data.items.filter((item) => !empty.includes(item.id));
     neverViewed = data.view.zoom <= 0;
     if (!neverViewed) view = { x: data.view.x, y: data.view.y, zoom: data.view.zoom };
     // Fit if it's never been looked at, or if nothing would be on screen where it was left
@@ -131,12 +156,42 @@
     report();
   }
 
-  /** Reloads the items (e.g. after images were added from the grid), keeping the view. */
+  async function loadFiles() {
+    files = new Map((await boardFiles(boardId)).map((file) => [pathKey(file.path), file]));
+  }
+
+  /** Reloads the items (e.g. after images were added from the grid), keeping the view. Can be undone. */
   export async function reload() {
+    const before = snapshot();
     const data = await getBoard(boardId);
+    await loadFiles();
     items = data.items;
+    rememberIfChanged(before);
     for (const id of [...selected]) if (!items.some((i) => i.id === id)) selected.delete(id);
     report();
+  }
+
+  // The folder changed: files may have appeared or gone, and images may have been renamed (the
+  // library has followed them, so only the paths here are out of date). Everything else about
+  // the items stays as it is, as they may be being dragged right now.
+  let seenFirstImages = false;
+  $effect(() => {
+    void images;
+    if (!seenFirstImages) {
+      seenFirstImages = true;
+      return;
+    }
+    untrack(() => followFolder().catch((e) => onerror(String(e))));
+  });
+
+  async function followFolder() {
+    const data = await getBoard(boardId);
+    await loadFiles();
+    const paths = new Map(data.items.map((item) => [item.id, item.path]));
+    for (const item of items) {
+      const path = paths.get(item.id);
+      if (path !== undefined && path !== item.path) item.path = path;
+    }
   }
 
   // When a board opens: if it was never viewed, or none of it is on screen, fit everything.
@@ -228,12 +283,12 @@
 
   function entryFor(path: string): ImageEntry {
     return (
-      entries.get(pathKey(path)) ?? { path, name: baseName(path), size: 0, modified: 0, width: 0, height: 0 }
+      files.get(pathKey(path)) ?? { path, name: baseName(path), size: 0, modified: 0, width: 0, height: 0 }
     );
   }
 
   function isMissing(path: string) {
-    return !entries.has(pathKey(path));
+    return !files.has(pathKey(path));
   }
 
   /** The sharper version to show on top of the thumbnail, or null when the thumbnail is enough. */
@@ -304,7 +359,8 @@
         selected.clear();
         selected.add(id);
       }
-      bringToFront([...selected]);
+      // Stacking only changes when asked for (Bring to front / Send to back in the menu), so
+      // selecting or moving an image doesn't undo where you've put it.
       const starts = new Map(selectedItems.map((item) => [item.id, { x: item.x, y: item.y }]));
       drag = { kind: "move", startX: p.x, startY: p.y, starts, moved: false };
       return;
@@ -331,7 +387,7 @@
     };
     const starts = new Map(selectedItems.map((item) => [item.id, { x: item.x, y: item.y, width: item.width, height: item.height }]));
     const free = selectedItems.length === 1 && selectedItems[0].path === null;
-    drag = { kind: "resize", fixed, box, starts, free };
+    drag = { kind: "resize", fixed, box, starts, free, moved: false };
   }
 
   function onpointermove(e: PointerEvent) {
@@ -348,8 +404,11 @@
       case "move": {
         const dx = (p.x - drag.startX) / view.zoom;
         const dy = (p.y - drag.startY) / view.zoom;
-        if (!drag.moved && Math.abs(p.x - drag.startX) + Math.abs(p.y - drag.startY) <= DRAG_THRESHOLD) return;
-        drag.moved = true;
+        if (!drag.moved) {
+          if (Math.abs(p.x - drag.startX) + Math.abs(p.y - drag.startY) <= DRAG_THRESHOLD) return;
+          remember();
+          drag.moved = true;
+        }
         for (const item of items) {
           const start = drag.starts.get(item.id);
           if (!start) continue;
@@ -362,6 +421,10 @@
       case "resize": {
         const w = toBoard(p.x, p.y);
         const { fixed, box, starts } = drag;
+        if (!drag.moved) {
+          remember();
+          drag.moved = true;
+        }
         if (drag.free) {
           const width = Math.max(80, Math.abs(w.x - fixed.x));
           const height = Math.max(50, Math.abs(w.y - fixed.y));
@@ -431,17 +494,107 @@
     // Already on top, in this order? Then there's nothing to change.
     const others = items.filter((i) => !ids.includes(i.id));
     if (moving.every((i) => others.every((o) => o.z < i.z))) return;
-    for (const item of moving) {
-      item.z = ++top;
-      dirty.add(item.id);
-    }
+    remember();
+    for (const item of moving) item.z = ++top;
+    save(moving.map((i) => i.id));
   }
 
   function sendToBack(ids: number[]) {
     let bottom = Math.min(0, ...items.map((i) => i.z));
     const moving = items.filter((i) => ids.includes(i.id)).sort((a, b) => b.z - a.z);
+    // Already behind everything? Then there's nothing to change.
+    const others = items.filter((i) => !ids.includes(i.id));
+    if (moving.every((i) => others.every((o) => o.z > i.z))) return;
+    remember();
     for (const item of moving) item.z = --bottom;
     save(moving.map((i) => i.id));
+  }
+
+  // ---- Undo and redo ----
+  // Each step keeps a copy of what was on the board before a change. Boards hold few items and
+  // change one action at a time, so this stays small, and it's dropped when the board is closed.
+
+  /** How many steps can be undone. */
+  const MAX_UNDO = 100;
+  let undoSteps: BoardItem[][] = [];
+  let redoSteps: BoardItem[][] = [];
+  /** Undoing and removing write to the database one at a time, so a quick Delete + Ctrl+Z stays in order. */
+  let queue: Promise<unknown> = Promise.resolve();
+
+  function snapshot(): BoardItem[] {
+    return $state.snapshot(items) as BoardItem[];
+  }
+
+  /** Call before changing the board; `before` is what to go back to, if it isn't the board as it is now. */
+  function remember(before: BoardItem[] = snapshot()) {
+    undoSteps.push(before);
+    if (undoSteps.length > MAX_UNDO) undoSteps.shift();
+    redoSteps = [];
+    showHistory();
+  }
+
+  function rememberIfChanged(before: BoardItem[]) {
+    if (JSON.stringify(before) !== JSON.stringify(snapshot())) remember(before);
+  }
+
+  function showHistory() {
+    canUndo = undoSteps.length > 0;
+    canRedo = redoSteps.length > 0;
+  }
+
+  export function undo() {
+    step(true);
+  }
+
+  export function redo() {
+    step(false);
+  }
+
+  function step(backwards: boolean) {
+    if (editingNote !== null || drag) return;
+    cropping = null;
+    queue = queue.then(async () => {
+      // Looked up only now: the lists are replaced when items change or get new ids.
+      const target = (backwards ? undoSteps : redoSteps).pop();
+      if (!target) return;
+      (backwards ? redoSteps : undoSteps).push(snapshot());
+      try {
+        await restore(target);
+      } catch (e) {
+        onerror(String(e));
+      }
+      showHistory();
+    });
+  }
+
+  /** Makes the board (and the database) match an earlier copy of it. */
+  async function restore(target: BoardItem[]) {
+    const current = new Map(snapshot().map((item) => [item.id, item]));
+    const wanted = new Set(target.map((item) => item.id));
+    // An image renamed since then keeps its new path: the library has followed the file.
+    const kept = target.map((item) => (current.has(item.id) ? { ...item, path: current.get(item.id)!.path } : item));
+
+    const gone = [...current.keys()].filter((id) => !wanted.has(id));
+    const back = kept.filter((item) => !current.has(item.id));
+    const changed = kept.filter(
+      (item) => current.has(item.id) && JSON.stringify(item) !== JSON.stringify(current.get(item.id)),
+    );
+    if (gone.length > 0) await removeBoardItems(boardId, gone);
+    const restored = back.length > 0 ? await restoreBoardItems(boardId, back) : [];
+    if (changed.length > 0) await updateBoardItems(boardId, changed);
+
+    // An item that came back with a new id (see `restore_board_items`) must be found under it in
+    // the rest of the history too.
+    const newIds = new Map(back.map((item, i) => [item.id, restored[i].id]));
+    const renumber = (list: BoardItem[]) => list.map((item) => ({ ...item, id: newIds.get(item.id) ?? item.id }));
+    if ([...newIds].some(([before, after]) => before !== after)) {
+      undoSteps = undoSteps.map(renumber);
+      redoSteps = redoSteps.map(renumber);
+    }
+    items = renumber(kept);
+    for (const id of [...selected]) if (!items.some((i) => i.id === id)) selected.delete(id);
+    await loadFiles();
+    report();
   }
 
   // ---- Cropping ----
@@ -478,15 +631,18 @@
     const item = items.find((i) => i.id === id);
     cropping = null;
     if (!item) return;
+    const before = snapshot();
     item.crop = isFullCrop(crop) ? null : crop;
     item.x = full.x + crop.x * full.width;
     item.y = full.y + crop.y * full.height;
     item.width = crop.w * full.width;
     item.height = crop.h * full.height;
+    rememberIfChanged(before);
     save([id]);
   }
 
   function resetCrop(item: BoardItem) {
+    remember();
     const full = uncroppedRect(item);
     Object.assign(item, { crop: null, ...full });
     save([item.id]);
@@ -503,26 +659,55 @@
   async function addNoteAt(x: number, y: number) {
     try {
       const note = await addBoardNote(boardId, "", x - NOTE_SIZE.width / 2, y - NOTE_SIZE.height / 2, NOTE_SIZE.width, NOTE_SIZE.height);
+      remember();
       items.push(note);
       selected.clear();
       selected.add(note.id);
       freshNote = note.id;
-      editingNote = note.id;
+      startEditing(note.id);
       report();
     } catch (e) {
       onerror(String(e));
     }
   }
 
+  /** The board before the note being edited changed, to go back to with undo. */
+  let beforeEditing: BoardItem[] = [];
+  let noteSaveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function startEditing(id: number) {
+    beforeEditing = snapshot();
+    editingNote = id;
+  }
+
+  /** Saves what's typed soon after each pause, so closing the app mid-sentence doesn't lose it. */
+  function saveNoteSoon(id: number) {
+    clearTimeout(noteSaveTimer);
+    noteSaveTimer = setTimeout(() => save([id]), NOTE_SAVE_DELAY_MS);
+  }
+
   function finishEditing() {
     const id = editingNote;
     editingNote = null;
+    clearTimeout(noteSaveTimer);
     if (id === null) return;
     const note = items.find((i) => i.id === id);
     if (!note) return;
-    if (id === freshNote && !note.text?.trim()) remove([id]); // an empty new note isn't kept
-    else save([id]);
-    freshNote = null;
+    if (id === freshNote) {
+      // Adding the note was already remembered as one step, together with what's typed in it.
+      if (!note.text?.trim()) {
+        // An empty new note isn't kept, and there's nothing to undo either.
+        undoSteps.pop();
+        showHistory();
+        remove([id], false);
+      } else {
+        save([id]);
+      }
+      freshNote = null;
+      return;
+    }
+    if (beforeEditing.find((item) => item.id === id)?.text !== note.text) remember(beforeEditing);
+    save([id]);
   }
 
   function focusEditor(textarea: HTMLTextAreaElement) {
@@ -535,22 +720,29 @@
   /** Tidies the selected items (or everything, if fewer than two are selected) into neat rows. */
   export function arrangeItems() {
     const targets = selectedItems.length >= 2 ? selectedItems : items;
+    const before = snapshot();
     const placed = arrange(targets);
     for (const item of targets) Object.assign(item, placed.get(item.id));
+    rememberIfChanged(before);
     save(placed.keys());
     if (targets === items) fitAll();
   }
 
-  async function remove(ids: number[]) {
+  /** Takes items off the board. `undoable` is false for tidying up an empty new note. */
+  function remove(ids: number[], undoable = true) {
     if (ids.length === 0) return;
-    try {
-      await removeBoardItems(boardId, ids);
-      items = items.filter((i) => !ids.includes(i.id));
-      for (const id of ids) selected.delete(id);
-      report();
-    } catch (e) {
-      onerror(String(e));
-    }
+    queue = queue.then(async () => {
+      try {
+        const before = snapshot();
+        await removeBoardItems(boardId, ids);
+        if (undoable) remember(before);
+        items = items.filter((i) => !ids.includes(i.id));
+        for (const id of ids) selected.delete(id);
+        report();
+      } catch (e) {
+        onerror(String(e));
+      }
+    });
   }
 
   /** The board position under a point on screen (e.g. where something was dropped), or null if it's outside the board. */
@@ -566,18 +758,18 @@
   }
 
   /** The board's images in reading order (rows top to bottom, left to right), for paging through in the viewer. */
-  function imagePaths() {
+  function imagesInOrder() {
     const rowHeight = 50; // images whose tops are this close count as the same row
     return items
       .filter((i) => i.path !== null && !isMissing(i.path))
       .sort((a, b) => Math.round(a.y / rowHeight) - Math.round(b.y / rowHeight) || a.x - b.x)
-      .map((i) => i.path!);
+      .map((i) => entryFor(i.path!));
   }
 
   function openInViewer(item: BoardItem) {
-    const paths = imagePaths();
-    const index = paths.indexOf(item.path!);
-    if (index >= 0) onopen(paths, index);
+    const list = imagesInOrder();
+    const index = list.findIndex((image) => image.path === item.path);
+    if (index >= 0) onopen(list, index);
   }
 
   function itemAt(e: MouseEvent): BoardItem | undefined {
@@ -595,7 +787,7 @@
       const at = toBoard(p.x, p.y);
       addNoteAt(at.x, at.y);
     } else if (item.path === null) {
-      editingNote = item.id;
+      startEditing(item.id);
     } else if (!isMissing(item.path)) {
       openInViewer(item);
     }
@@ -623,9 +815,9 @@
       const removeLabel = several ? `Remove ${ids.length} from board` : "Remove from board";
       if (item.path === null) {
         menu = [
-          { label: "Edit text", action: () => (editingNote = item.id) },
+          { label: "Edit text", action: () => startEditing(item.id) },
           "separator",
-          { label: "Bring to front", action: () => (bringToFront(ids), save(dirty), dirty.clear()) },
+          { label: "Bring to front", action: () => bringToFront(ids) },
           { label: "Send to back", action: () => sendToBack(ids) },
           "separator",
           { label: removeLabel, hint: "Del", danger: true, action: () => remove(ids) },
@@ -638,7 +830,7 @@
           { label: "Crop", disabled: missing || several, action: () => startCrop(item) },
           ...(item.crop ? [{ label: "Show whole image", action: () => resetCrop(item) }] : []),
           "separator",
-          { label: "Bring to front", action: () => (bringToFront(ids), save(dirty), dirty.clear()) },
+          { label: "Bring to front", action: () => bringToFront(ids) },
           { label: "Send to back", action: () => sendToBack(ids) },
           ...(several ? [{ label: "Arrange selected", action: arrangeItems }] : []),
           "separator",
@@ -661,10 +853,17 @@
     }
     if (hasOtherModifier(e)) return;
     if (hasPrimaryModifier(e)) {
-      if (e.key === "a" || e.key === "A") {
+      const key = e.key.toLowerCase();
+      if (key === "a") {
         for (const item of items) selected.add(item.id);
-        e.preventDefault();
+      } else if (key === "z") {
+        step(!e.shiftKey); // with Shift: redo
+      } else if (key === "y") {
+        step(false);
+      } else {
+        return;
       }
+      e.preventDefault();
       return;
     }
     switch (e.key) {
@@ -759,6 +958,7 @@
           placeholder="Type a note…"
           spellcheck="false"
           {@attach focusEditor}
+          oninput={() => saveNoteSoon(item.id)}
           onblur={finishEditing}
           onkeydown={(e) => {
             e.stopPropagation();

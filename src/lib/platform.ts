@@ -30,6 +30,23 @@ export function shortcutLabel(key: string): string {
   return isMac ? `⌘${key}` : `Ctrl+${key}`;
 }
 
+/**
+ * Shortcuts that belong to the web view rather than to an app: reload, find, print, save page, …
+ * The app is a single page in a web view, so these would reload it (losing the current filter
+ * and selection) or open browser tools that make no sense here. The list leaves out what people
+ * rely on: copy and paste, and on a Mac the system's own Cmd+Q, Cmd+W and Cmd+H.
+ */
+export function isBrowserShortcut(e: KeyboardEvent): boolean {
+  if (e.key === "F3" || e.key === "F5" || e.key === "F7") return true;
+  if (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) return true; // history
+  return hasPrimaryModifier(e) && !hasOtherModifier(e) && "rfgpsoujld".includes(e.key.toLowerCase());
+}
+
+/** F5 or Ctrl+R (⌘R): in this app, these rescan the folder instead of reloading the page. */
+export function isRefreshShortcut(e: KeyboardEvent): boolean {
+  return e.key === "F5" || (hasPrimaryModifier(e) && !hasOtherModifier(e) && e.key.toLowerCase() === "r");
+}
+
 /** What the system's file browser is called. */
 export const fileManagerName = isMac ? "Finder" : isWindows ? "Explorer" : "file manager";
 

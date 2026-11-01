@@ -49,6 +49,24 @@ fn is_hidden(entry: &DirEntry) -> bool {
     entry.file_name().to_str().is_some_and(|name| name.starts_with('.') || name.starts_with('$'))
 }
 
+/// The details of one image file, or None if it isn't there (or isn't an image). For images that
+/// a scan may not list, like those in subfolders with "Subfolders" off. Pixel size still needs filling in.
+pub fn entry_for(path: &Path) -> Option<ImageEntry> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || !is_image(path) {
+        return None;
+    }
+    let (size, modified) = file_stamp(&meta);
+    Some(ImageEntry {
+        path: path.to_string_lossy().into_owned(),
+        name: path.file_name()?.to_string_lossy().into_owned(),
+        size,
+        modified,
+        width: 0,
+        height: 0,
+    })
+}
+
 pub fn scan(folder: &Path, recursive: bool) -> Vec<ImageEntry> {
     let max_depth = if recursive { usize::MAX } else { 1 };
     WalkDir::new(folder)

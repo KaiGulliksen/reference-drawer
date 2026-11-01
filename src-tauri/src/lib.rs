@@ -1,3 +1,4 @@
+mod backup;
 mod boards;
 mod identity;
 mod import;
@@ -22,6 +23,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use tauri::http::{Request, Response, StatusCode, header};
 use tauri::{AppHandle, Manager, State, UriSchemeContext, UriSchemeResponder, Wry};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use watch::FolderWatch;
 
 /// Set this to use a different folder for the library database and caches, e.g. a throwaway one for testing.
@@ -29,6 +31,9 @@ const DATA_DIR_ENV: &str = "REFERENCE_LIBRARY_DATA_DIR";
 
 /// Where generated thumbnails are stored (inside %LOCALAPPDATA% on Windows).
 struct ThumbCacheDir(PathBuf);
+
+/// Where the library's safety copies are kept (see backup.rs).
+struct BackupFolder(PathBuf);
 
 /// When a grid thumbnail can't be generated, the original file is shown instead,
 /// but only if it is small enough not to slow the grid down.
@@ -258,6 +263,54 @@ async fn remove_board_items(library: State<'_, Library>, board_id: i64, ids: Vec
     library.remove_board_items(board_id, &ids)
 }
 
+/// Puts items back on a board (undo). Like adding images: fingerprinted in the background,
+/// as their records may have been forgotten while they were off the board.
+#[tauri::command]
+async fn restore_board_items(
+    app: AppHandle,
+    library: State<'_, Library>,
+    board_id: i64,
+    items: Vec<BoardItem>,
+) -> Result<Vec<BoardItem>, String> {
+    let restored = library.restore_board_items(board_id, &items)?;
+    let workspace_id = library.board_data(board_id)?.board.workspace_id;
+    let paths: Vec<String> = items.into_iter().filter_map(|item| item.path).collect();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = app.state::<Library>().fingerprint_new(workspace_id, &paths) {
+            eprintln!("Couldn't fingerprint images put back on a board: {e}");
+        }
+    });
+    Ok(restored)
+}
+
+/// The image files on a board that are really there, looked up directly: a board can hold images
+/// the workspace's scan doesn't list, like those in subfolders with "Subfolders" off. Their paths
+/// come from the library (always inside the workspace's folder), and the web view is allowed to
+/// load just these files, not the subfolders around them.
+#[tauri::command]
+async fn board_files(app: AppHandle, library: State<'_, Library>, board_id: i64) -> Result<Vec<ImageEntry>, String> {
+    let paths: Vec<String> = library.board_data(board_id)?.items.into_iter().filter_map(|item| item.path).collect();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut files: Vec<ImageEntry> =
+            parallel::map(&paths, |path| scan::entry_for(Path::new(path))).into_iter().flatten().collect();
+        app.state::<SizeCache>().fill(&mut files);
+        for file in &files {
+            app.asset_protocol_scope().allow_file(&file.path).map_err(|e| e.to_string())?;
+        }
+        Ok(files)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// The folder the library's safety copies are in (see backup.rs), made if it isn't there yet so
+/// it can be shown in the file manager.
+#[tauri::command]
+async fn backups_folder(folder: State<'_, BackupFolder>) -> Result<String, String> {
+    fs::create_dir_all(&folder.0).map_err(|e| e.to_string())?;
+    Ok(folder.0.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 async fn set_board_view(library: State<'_, Library>, board_id: i64, view: BoardView) -> Result<(), String> {
     library.set_board_view(board_id, view)
@@ -450,6 +503,45 @@ fn status(code: StatusCode) -> Response<Vec<u8>> {
     Response::builder().status(code).body(Vec::new()).unwrap()
 }
 
+/// The folders the library database and the caches are in.
+fn data_folders(app: &tauri::App) -> tauri::Result<(PathBuf, PathBuf)> {
+    // With DATA_DIR_ENV set (for testing), the caches go in that folder too, so a test
+    // run touches nothing of the real app's.
+    Ok(match std::env::var_os(DATA_DIR_ENV) {
+        Some(dir) => (PathBuf::from(&dir), PathBuf::from(&dir).join("cache")),
+        None => (app.path().app_data_dir()?, app.path().app_cache_dir()?),
+    })
+}
+
+/// Opens the library and caches, and gets everything the commands rely on ready.
+fn start_up(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let (data_dir, cache_dir) = data_folders(app)?;
+    let database = data_dir.join("library.db");
+    app.manage(ThumbCacheDir(cache_dir.join("thumbs")));
+    app.manage(SizeCache::open(&cache_dir.join("sizes.db"))?);
+    app.manage(BackupFolder(backup::folder(&database)));
+    app.manage(Library::open(&database)?);
+    // Today's safety copy, in the background so it never holds up opening the window. If it
+    // fails the app still works; the copies from earlier days are still there.
+    std::thread::spawn(move || {
+        if let Err(e) = backup::daily(&database) {
+            eprintln!("Couldn't back up the library: {e}");
+        }
+    });
+    if let Some(window) = app.get_webview_window("main") {
+        platform::watch_dropped_paths(&window)?;
+    }
+    Ok(())
+}
+
+/// What to tell the user when the app can't start, including where the safety copies are.
+fn startup_message(app: &tauri::App, problem: &str) -> String {
+    let backups = data_folders(app)
+        .map(|(data_dir, _)| format!("\n\nCopies of your library are kept in:\n{}", backup::folder(&data_dir.join("library.db")).display()))
+        .unwrap_or_default();
+    format!("{problem}\n\nYour images aren't affected.{backups}")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Leave a core free for the rest of the system, and cap it so decoding many
@@ -464,17 +556,19 @@ pub fn run() {
         .manage(FolderWatch::default())
         .register_asynchronous_uri_scheme_protocol("thumb", thumb_protocol)
         .setup(|app| {
-            // With DATA_DIR_ENV set (for testing), the caches go in that folder too, so a test
-            // run touches nothing of the real app's.
-            let (data_dir, cache_dir) = match std::env::var_os(DATA_DIR_ENV) {
-                Some(dir) => (PathBuf::from(&dir), PathBuf::from(&dir).join("cache")),
-                None => (app.path().app_data_dir()?, app.path().app_cache_dir()?),
-            };
-            app.manage(ThumbCacheDir(cache_dir.join("thumbs")));
-            app.manage(SizeCache::open(&cache_dir.join("sizes.db"))?);
-            app.manage(Library::open(&data_dir.join("library.db"))?);
-            if let Some(window) = app.get_webview_window("main") {
-                platform::watch_dropped_paths(&window)?;
+            // A failure here used to end the app without a word (the window never appeared), so
+            // say what's wrong instead, then quit. The message is shown once the app's event loop
+            // is running, which is why setup itself still finishes normally.
+            if let Err(problem) = start_up(app) {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+                let handle = app.handle().clone();
+                app.dialog()
+                    .message(startup_message(app, &problem.to_string()))
+                    .title("Reference Library can't start")
+                    .kind(MessageDialogKind::Error)
+                    .show(move |_| handle.exit(1));
             }
             Ok(())
         })
@@ -504,6 +598,9 @@ pub fn run() {
             add_board_note,
             update_board_items,
             remove_board_items,
+            restore_board_items,
+            board_files,
+            backups_folder,
             set_board_view,
             import_image,
             import_image_url,

@@ -262,6 +262,51 @@ impl Library {
         Ok(())
     }
 
+    /// Puts items that were taken off a board back as they were (for undo), including position,
+    /// stacking, crop and note text. They keep their ids where possible, so the rest of the undo
+    /// history still refers to them; if another item has taken an id since, a new one is used.
+    /// Returns the items with their final ids, in the same order.
+    pub fn restore_board_items(&self, board_id: i64, items: &[BoardItem]) -> Result<Vec<BoardItem>> {
+        let mut conn = self.conn.lock().unwrap();
+        let board = get_board(&conn, board_id)?;
+        let folder = PathBuf::from(get_workspace(&conn, board.workspace_id)?.path);
+        let tx = conn.transaction().map_err(err)?;
+        let mut restored = Vec::new();
+        for item in items {
+            let image_id = match &item.path {
+                Some(path) => Some(image_record(&tx, board.workspace_id, &relative_path(&folder, path)?)?),
+                None => None,
+            };
+            let taken: bool = tx
+                .query_row("SELECT EXISTS (SELECT 1 FROM board_items WHERE id = ?1)", [item.id], |r| r.get(0))
+                .map_err(err)?;
+            let crop = item.crop;
+            tx.execute(
+                "INSERT INTO board_items (id, board_id, image_id, text, x, y, width, height, z, crop_x, crop_y, crop_w, crop_h)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![
+                    (!taken).then_some(item.id), // NULL: SQLite picks a new id
+                    board_id,
+                    image_id,
+                    item.text,
+                    item.x,
+                    item.y,
+                    item.width,
+                    item.height,
+                    item.z,
+                    crop.map(|c| c.x),
+                    crop.map(|c| c.y),
+                    crop.map(|c| c.w),
+                    crop.map(|c| c.h),
+                ],
+            )
+            .map_err(err)?;
+            restored.push(BoardItem { id: tx.last_insert_rowid(), ..item.clone() });
+        }
+        tx.commit().map_err(err)?;
+        Ok(restored)
+    }
+
     /// The boards (names, in sidebar order) that moving these images to another workspace would
     /// take them off: boards only hold images from their own workspace (see `moved_to_workspace`).
     /// None if the other workspace's folder is inside this one's, as the images then stay here too.
@@ -401,6 +446,49 @@ mod tests {
         lib.set_board_view(board.id, BoardView { x: -40.0, y: 12.0, zoom: 0.75 }).unwrap();
         let view = lib.board_data(board.id).unwrap().view;
         assert_eq!((view.x, view.y, view.zoom), (-40.0, 12.0, 0.75));
+    }
+
+    #[test]
+    fn removed_items_can_be_put_back_exactly_as_they_were() {
+        let (lib, ws, folder) = setup("restore");
+        let a = write_image(&folder, "a.jpg", 7);
+        let board = lib.create_board(ws, "Board").unwrap();
+        let mut image = lib.add_board_images(board.id, &[at(&a, 40.0)]).unwrap().remove(0);
+        image.crop = Some(Crop { x: 0.1, y: 0.2, w: 0.3, h: 0.4 });
+        image.z = -3;
+        lib.update_board_items(board.id, &[image.clone()]).unwrap();
+        let note = lib.add_board_note(board.id, "cooler light", 5.0, 6.0, 200.0, 100.0).unwrap();
+
+        lib.remove_board_items(board.id, &[image.id, note.id]).unwrap();
+        // With no tags and no board, the scan's clean-up forgets the image's record. It comes back.
+        lib.reconcile(ws, &crate::scan::scan(&folder, false)).unwrap();
+        let restored = lib.restore_board_items(board.id, &[image.clone(), note.clone()]).unwrap();
+        assert_eq!((restored[0].id, restored[1].id), (image.id, note.id), "they keep their ids");
+
+        let data = lib.board_data(board.id).unwrap();
+        assert_eq!(data.board.image_count, 1);
+        let back = data.items.iter().find(|i| i.id == image.id).unwrap();
+        assert_eq!(back.path.as_deref(), Some(a.as_str()));
+        assert_eq!((back.x, back.z, back.crop), (40.0, -3, image.crop));
+        let back_note = data.items.iter().find(|i| i.id == note.id).unwrap();
+        assert_eq!(back_note.text.as_deref(), Some("cooler light"));
+        assert_eq!(back_note.path, None);
+    }
+
+    #[test]
+    fn an_item_put_back_gets_a_new_id_if_its_old_one_is_taken() {
+        let (lib, ws, _) = setup("restore-taken");
+        let first = lib.create_board(ws, "First").unwrap();
+        let second = lib.create_board(ws, "Second").unwrap();
+        let note = lib.add_board_note(first.id, "old", 0.0, 0.0, 100.0, 100.0).unwrap();
+        lib.remove_board_items(first.id, &[note.id]).unwrap();
+        let other = lib.add_board_note(second.id, "other", 0.0, 0.0, 100.0, 100.0).unwrap();
+        assert_eq!(other.id, note.id, "SQLite reuses the free id");
+
+        let restored = lib.restore_board_items(first.id, &[note.clone()]).unwrap();
+        assert_ne!(restored[0].id, note.id);
+        assert_eq!(lib.board_data(first.id).unwrap().items[0].text.as_deref(), Some("old"));
+        assert_eq!(lib.board_data(second.id).unwrap().items[0].text.as_deref(), Some("other"));
     }
 
     #[test]

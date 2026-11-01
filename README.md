@@ -59,8 +59,8 @@ and the app says *Finder* where it says *Explorer* here.
   - Boards belong to their workspace, so a moved image leaves the old workspace's boards. The app
     asks first when that would happen.
 - **The open workspace updates by itself:** images added, removed or renamed in its folder (in
-  Explorer, by a browser's downloads, …) show up within a second. *Refresh* is still there for
-  network drives, where the system may not report changes.
+  Explorer, by a browser's downloads, …) show up within a second. *Refresh* (or **F5** / **Ctrl+R**)
+  is still there for network drives, where the system may not report changes.
 - **Subfolders** includes images in folders inside the workspace's folder.
 - **Mood boards** gather the references for one piece in a single place (in the sidebar, under the
   workspaces; each board belongs to its workspace).
@@ -69,9 +69,17 @@ and the app says *Finder* where it says *Explorer* here.
   - On the board: drag empty space (or with the middle button) to move around, scroll to zoom,
     drag images to move them, drag the corner handles to resize, Shift+drag to select with a box.
     **Arrange** tidies the selection (or everything) into rows; **Fit** (or F) shows everything.
+  - **Undo** and **Redo** (toolbar, or **Ctrl+Z** and **Ctrl+Y** / **Ctrl+Shift+Z**) cover everything done
+    to the board's items since you opened it: moving, resizing, cropping, stacking, Arrange, notes,
+    adding and removing.
   - Double-click an image to view it full size, empty space to add a note, a note to edit it.
+    Notes are saved as you type.
   - Right-click an image to **crop** it (only what's shown on the board changes, never the file),
-    bring it to the front, or remove it from the board (Delete). Removing never touches the file.
+    bring it to the front, send it to the back, or remove it from the board (Delete). Removing never
+    touches the file. Stacking only changes when you ask: clicking or moving an image leaves it
+    where it is in the stack.
+  - A board shows its images whether or not *Subfolders* is ticked. "Image not found" means the file
+    really is gone.
   - *← Images*, clicking the workspace, or the mouse back button returns to the grid.
 - **Layout** (toolbar): *Masonry* shows tiles shaped like their images, in columns; *Grid* shows
   square tiles in rows, where **Fill / Whole** switches between cropped and whole images.
@@ -87,6 +95,11 @@ on macOS, `~/.local/share/com.kaigulliksen.reflibrary` on Linux. **Tags stay wit
 - Editing an image in place keeps its tags too.
 - A *copy* of a tagged image starts untagged, and a deleted image's tags are kept in case the file comes back.
 - Moving the whole folder works too (use *Change folder…*).
+
+**Backups:** `library.db` is copied into a `backups` folder next to it once a day (when the app starts; the
+last 7 days are kept) and right before a new version upgrades it (those are kept for good).
+**Settings → Show folder** opens it. To go back to a copy: close the app, delete `library.db`,
+`library.db-wal` and `library.db-shm`, then copy the backup you want next to where they were and name it `library.db`.
 
 How it works: each tagged image gets a "fingerprint" of its contents (its size plus its first and last
 16 KB). When a tagged file disappears and an untagged file with the same fingerprint turns up,
@@ -130,7 +143,7 @@ src/                      the interface (Svelte)
   routes/+page.svelte     main window: switching workspaces, toolbar, empty states, menus
   lib/Sidebar.svelte      the workspace list and the tag list with search
   lib/TagEditor.svelte    adding/removing tags on the selected images
-  lib/SettingsDialog.svelte  settings (the tag shortcut)
+  lib/SettingsDialog.svelte  settings (thumbnails, the tag shortcut, the backups folder)
   lib/Board.svelte        a mood board: the free canvas, notes and cropping
   lib/board.ts            board geometry: placing new images, Arrange, Fit
   lib/drop.ts             reading images and folders dragged onto the window from other apps
@@ -147,6 +160,7 @@ src/                      the interface (Svelte)
   lib/settings.svelte.ts  remembered preferences
 src-tauri/                the backend (Rust)
   src/lib.rs              app setup, commands, the thumb:// protocol
+  src/backup.rs           safety copies of the library database (daily, and before upgrades)
   src/boards.rs           mood boards and what's on them, with tests
   src/library.rs          the library database (workspaces, tags, their colors), with its tests;
                           `reconcile` keeps tags with renamed and moved images

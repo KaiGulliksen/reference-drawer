@@ -260,4 +260,17 @@ export const updateBoardItems = (boardId: number, items: BoardItem[]) =>
 export const removeBoardItems = (boardId: number, ids: number[]) =>
   invoke<void>("remove_board_items", { boardId, ids });
 
+/** Puts removed items back as they were (undo). Resolves to them with their final ids, in the same order. */
+export const restoreBoardItems = (boardId: number, items: BoardItem[]) =>
+  invoke<BoardItem[]>("restore_board_items", { boardId, items });
+
+/**
+ * The image files on a board that are really there, whether or not the workspace's scan lists them
+ * (it doesn't list images in subfolders with "Subfolders" off). Also lets the web view load them.
+ */
+export const boardFiles = (boardId: number) => invoke<ImageEntry[]>("board_files", { boardId });
+
 export const setBoardView = (boardId: number, view: BoardView) => invoke<void>("set_board_view", { boardId, view });
+
+/** The folder the library's safety copies are kept in. */
+export const backupsFolder = () => invoke<string>("backups_folder");

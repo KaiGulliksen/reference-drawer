@@ -67,6 +67,7 @@ export const RESERVED_KEYS: Record<string, string> = {
   "+": "zooming in",
   "=": "zooming in",
   "-": "zooming out",
+  f5: "refreshing the folder",
 };
 
 /** How to show a key to people: "T", "F2", "Space". */

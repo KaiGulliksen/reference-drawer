@@ -1,7 +1,10 @@
 <!--
-  App settings. For now: the keyboard shortcut that opens the tag editor.
+  App settings: what thumbnails show, the tag shortcut, and where the library's backups are.
 -->
 <script lang="ts">
+  import { revealItemInDir } from "@tauri-apps/plugin-opener";
+  import { backupsFolder } from "./api";
+  import { fileManagerName } from "./platform";
   import { RESERVED_KEYS, keyLabel, settings } from "./settings.svelte";
 
   interface Props {
@@ -9,6 +12,14 @@
   }
 
   let { onclose }: Props = $props();
+
+  async function showBackups() {
+    try {
+      await revealItemInDir(await backupsFolder());
+    } catch (e) {
+      message = String(e);
+    }
+  }
 
   /** True while waiting for you to press the new shortcut key. */
   let recording = $state(false);
@@ -98,6 +109,17 @@
       <p class="message">{message}</p>
     {/if}
   </section>
+
+  <section>
+    <h3>Library</h3>
+    <div class="row">
+      <div>
+        <div>Backups</div>
+        <div class="hint">Your tags and boards are copied once a day (the last 7 days are kept) and before each upgrade.</div>
+      </div>
+      <button class="no-wrap" onclick={showBackups} title="Show the backups folder in {fileManagerName}">Show folder</button>
+    </div>
+  </section>
 </div>
 
 <style>
@@ -163,6 +185,10 @@
     flex-shrink: 0;
     accent-color: var(--accent);
     cursor: pointer;
+  }
+  .no-wrap {
+    flex-shrink: 0;
+    white-space: nowrap;
   }
   .hint {
     margin-top: 2px;
