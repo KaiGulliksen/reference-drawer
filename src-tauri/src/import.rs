@@ -52,7 +52,7 @@ pub fn download(url: &str) -> Result<(String, Vec<u8>), String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(DOWNLOAD_TIMEOUT))
         // Some image hosts turn away requests that don't say what they come from.
-        .user_agent(concat!("Mozilla/5.0 (compatible; ReferenceLibrary/", env!("CARGO_PKG_VERSION"), ")"))
+        .user_agent(concat!("Mozilla/5.0 (compatible; ReferenceDrawer/", env!("CARGO_PKG_VERSION"), ")"))
         .build()
         .into();
     let mut response = agent

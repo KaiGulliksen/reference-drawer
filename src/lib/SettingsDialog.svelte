@@ -1,8 +1,10 @@
 <!--
-  App settings: what thumbnails show, the tag shortcut, and where the library's backups are.
+  App settings (what thumbnails show, the tag shortcut, where the library's backups are) and,
+  on a second tab, the About page. They share a dialog so Esc and the mouse back button
+  close both the same way.
 -->
 <script lang="ts">
-  import { revealItemInDir } from "@tauri-apps/plugin-opener";
+  import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
   import { backupsFolder } from "./api";
   import { fileManagerName } from "./platform";
   import { RESERVED_KEYS, keyLabel, settings } from "./settings.svelte";
@@ -12,6 +14,27 @@
   }
 
   let { onclose }: Props = $props();
+
+  // The app is only allowed to open this exact address (capabilities/default.json),
+  // so if it changes here it has to change there too.
+  const WEBSITE = "https://kaigulliksen.com";
+
+  let page = $state<"settings" | "about">("settings");
+
+  function showPage(next: typeof page) {
+    page = next;
+    // Leaving the page mid-way shouldn't leave it waiting for a key nobody can see it asking for.
+    recording = false;
+    message = null;
+  }
+
+  async function openWebsite() {
+    try {
+      await openUrl(WEBSITE);
+    } catch (e) {
+      message = String(e);
+    }
+  }
 
   async function showBackups() {
     try {
@@ -61,65 +84,85 @@
 <!-- Only ordinary clicks close it here; the mouse's back button is handled by the page. -->
 <div class="backdrop" role="presentation" onpointerdown={(e) => e.button <= 2 && onclose()}></div>
 
-<div class="dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+<div class="dialog" role="dialog" aria-modal="true" aria-label="Settings">
   <header>
-    <h2 id="settings-title">Settings</h2>
+    <nav class="tabs">
+      <button class:current={page === "settings"} aria-current={page === "settings" ? "page" : undefined} onclick={() => showPage("settings")}>Settings</button>
+      <button class:current={page === "about"} aria-current={page === "about" ? "page" : undefined} onclick={() => showPage("about")}>About</button>
+    </nav>
     <button class="close" onclick={onclose} aria-label="Close" title="Close (Esc)">✕</button>
   </header>
 
-  <section>
-    <h3>Thumbnails</h3>
-    <label class="row toggle">
-      <div>
-        <div>Show tags</div>
-        <div class="hint">Each image's tags along the bottom of its thumbnail.</div>
-      </div>
-      <input type="checkbox" bind:checked={settings.showTileTags} />
-    </label>
-    <label class="row toggle">
-      <div>
-        <div>Show file names</div>
-        <div class="hint">Each image's file name on its thumbnail. It's always shown in the status bar.</div>
-      </div>
-      <input type="checkbox" bind:checked={settings.showTileNames} />
-    </label>
-  </section>
+  <!-- Both pages sit in the same spot and the hidden one keeps its space, so the dialog
+       doesn't change size and jump around when switching tabs. -->
+  <div class="pages">
+    <div class:hidden={page !== "settings"}>
+      <section>
+        <h3>Thumbnails</h3>
+        <label class="row toggle">
+          <div>
+            <div>Show tags</div>
+            <div class="hint">Each image's tags along the bottom of its thumbnail.</div>
+          </div>
+          <input type="checkbox" bind:checked={settings.showTileTags} />
+        </label>
+        <label class="row toggle">
+          <div>
+            <div>Show file names</div>
+            <div class="hint">Each image's file name on its thumbnail. It's always shown in the status bar.</div>
+          </div>
+          <input type="checkbox" bind:checked={settings.showTileNames} />
+        </label>
+      </section>
 
-  <section>
-    <h3>Keyboard shortcuts</h3>
-    <div class="row">
-      <div>
-        <div>Edit tags</div>
-        <div class="hint">Tags the selected images, or the image open in the viewer.</div>
-      </div>
-      <div class="key-setting">
-        {#if recording}
-          <span class="key recording">Press a key…</span>
-          <button onclick={() => ((recording = false), (message = null))}>Cancel</button>
-        {:else}
-          <kbd class="key">{keyLabel(settings.tagHotkey)}</kbd>
-          <button onclick={() => (recording = true)}>Change</button>
-          {#if settings.tagHotkey !== "t"}
-            <button onclick={() => (settings.tagHotkey = "t")} title="Back to T">Reset</button>
-          {/if}
+      <section>
+        <h3>Keyboard shortcuts</h3>
+        <div class="row">
+          <div>
+            <div>Edit tags</div>
+            <div class="hint">Tags the selected images, or the image open in the viewer.</div>
+          </div>
+          <div class="key-setting">
+            {#if recording}
+              <span class="key recording">Press a key…</span>
+              <button onclick={() => ((recording = false), (message = null))}>Cancel</button>
+            {:else}
+              <kbd class="key">{keyLabel(settings.tagHotkey)}</kbd>
+              <button onclick={() => (recording = true)}>Change</button>
+              {#if settings.tagHotkey !== "t"}
+                <button onclick={() => (settings.tagHotkey = "t")} title="Back to T">Reset</button>
+              {/if}
+            {/if}
+          </div>
+        </div>
+        {#if message}
+          <p class="message">{message}</p>
         {/if}
-      </div>
-    </div>
-    {#if message}
-      <p class="message">{message}</p>
-    {/if}
-  </section>
+      </section>
 
-  <section>
-    <h3>Library</h3>
-    <div class="row">
-      <div>
-        <div>Backups</div>
-        <div class="hint">Your tags and boards are copied once a day (the last 7 days are kept) and before each upgrade.</div>
-      </div>
-      <button class="no-wrap" onclick={showBackups} title="Show the backups folder in {fileManagerName}">Show folder</button>
+      <section>
+        <h3>Library</h3>
+        <div class="row">
+          <div>
+            <div>Backups</div>
+            <div class="hint">Your tags and boards are copied once a day (the last 7 days are kept) and before each upgrade.</div>
+          </div>
+          <button class="no-wrap" onclick={showBackups} title="Show the backups folder in {fileManagerName}">Show folder</button>
+        </div>
+      </section>
     </div>
-  </section>
+
+    <div class="about" class:hidden={page !== "about"}>
+      <p class="name">Reference Drawer</p>
+      <p>An open source project. The source code isn't public yet, but it will be.</p>
+      <p>Released under the MIT License by Kai Gulliksen.</p>
+      <!-- A button rather than a link: a real link would load the site inside the app's window. -->
+      <p><button class="link" onclick={openWebsite} title="Open in your web browser">kaigulliksen.com</button></p>
+      {#if message}
+        <p class="message">{message}</p>
+      {/if}
+    </div>
+  </div>
 </div>
 
 <style>
@@ -147,10 +190,51 @@
     align-items: center;
     justify-content: space-between;
   }
-  h2 {
-    margin: 0;
+  .tabs {
+    display: flex;
+    gap: 16px;
+  }
+  .tabs button {
+    padding: 0;
     font-size: 17px;
     font-weight: 600;
+    color: var(--text-dim);
+    background: transparent;
+    border: none;
+  }
+  .tabs button:hover,
+  .tabs button.current {
+    color: var(--text);
+  }
+  .pages {
+    display: grid;
+  }
+  .pages > div {
+    grid-area: 1 / 1;
+    min-width: 0;
+  }
+  .hidden {
+    visibility: hidden;
+  }
+  .about {
+    padding-top: 16px;
+  }
+  .about p {
+    margin: 0 0 10px;
+  }
+  .about .name {
+    font-weight: 600;
+  }
+  .link {
+    padding: 0;
+    color: var(--accent);
+    background: transparent;
+    border: none;
+    text-decoration: underline;
+  }
+  .link:hover {
+    background: transparent;
+    filter: brightness(1.15);
   }
   h3 {
     margin: 16px 0 10px;

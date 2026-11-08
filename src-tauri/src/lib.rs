@@ -566,7 +566,7 @@ pub fn run() {
                 let handle = app.handle().clone();
                 app.dialog()
                     .message(startup_message(app, &problem.to_string()))
-                    .title("Reference Library can't start")
+                    .title("Reference Drawer can't start")
                     .kind(MessageDialogKind::Error)
                     .show(move |_| handle.exit(1));
             }

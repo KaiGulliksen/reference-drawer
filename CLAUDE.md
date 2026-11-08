@@ -1,9 +1,15 @@
-# Reference Library
+# Reference Drawer
 
 A lightweight desktop app for collecting, browsing, tagging and arranging reference images
 (art inspiration, interiors, …). Tauri 2 (Rust backend in `src-tauri/`) + Svelte 5 / SvelteKit as a
 single-page app (interface in `src/`). README.md has the features, how to use them, and the full
 file layout.
+
+The app used to be called Reference Library. Only the name people see changed: don't rename the
+`identifier` in `tauri.conf.json` (it decides where `library.db` and the settings are, so installed
+copies would look empty) or `STORAGE_KEY` in `settings.svelte.ts` (settings would reset). The
+project folder, GitHub repo, package and program names (`reference-library`) and
+`REFERENCE_LIBRARY_DATA_DIR` keep the old name too.
 
 The owner has basic coding skills but a good grasp of concepts: explain changes and decisions in
 plain language, say what was tested and how, and keep code commented the way it is now (comments
@@ -141,7 +147,7 @@ Any change to this logic needs tests in `library.rs` (they use real temp files).
 - Send file contents to a command as a raw body (`invoke(cmd, bytes, { headers })`, read with
   `tauri::ipc::Request`), not as a JSON array of numbers; see `import_image`.
 - Anything the interface calls that isn't a plain command needs a permission in
-  `src-tauri/capabilities/default.json` (currently: window title, open/ask dialogs, reveal in folder).
+  `src-tauri/capabilities/default.json` (currently: window title, open/ask dialogs, reveal in folder, opening the one website address on the About page).
   Grant the narrowest permission that works.
 - A broken image file must never crash the app: catch panics around decoding (`catch_unwind`) and
   fall back gracefully, as `thumb_protocol` and `sizes.rs` do.

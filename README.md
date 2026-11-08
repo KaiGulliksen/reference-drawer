@@ -1,4 +1,4 @@
-# Reference Library
+# Reference Drawer
 
 A lightweight desktop app for browsing folders of art reference images.
 Built with [Tauri 2](https://tauri.app) (Rust backend + the WebView2 browser engine that ships with Windows)
@@ -85,6 +85,7 @@ and the app says *Finder* where it says *Explorer* here.
   square tiles in rows, where **Fill / Whole** switches between cropped and whole images.
 - **Settings** (the gear button at the top left, next to the sidebar button) has switches for showing tags and file names on thumbnails.
   Tags are shown and names hidden by default; the focused image's name is always in the status bar.
+  Its **About** tab says who made the app and under which license.
 
 Workspaces and tags are stored in an SQLite database, `library.db`, in the app's data folder:
 `%APPDATA%\com.kaigulliksen.reflibrary` on Windows, `~/Library/Application Support/com.kaigulliksen.reflibrary`
@@ -143,7 +144,7 @@ src/                      the interface (Svelte)
   routes/+page.svelte     main window: switching workspaces, toolbar, empty states, menus
   lib/Sidebar.svelte      the workspace list and the tag list with search
   lib/TagEditor.svelte    adding/removing tags on the selected images
-  lib/SettingsDialog.svelte  settings (thumbnails, the tag shortcut, the backups folder)
+  lib/SettingsDialog.svelte  settings (thumbnails, the tag shortcut, the backups folder) and the About page
   lib/Board.svelte        a mood board: the free canvas, notes and cropping
   lib/board.ts            board geometry: placing new images, Arrange, Fit
   lib/drop.ts             reading images and folders dragged onto the window from other apps
@@ -198,3 +199,7 @@ src-tauri/                the backend (Rust)
   so the masonry layout costs almost nothing after the first scan of a folder.
 
 Deleting the thumbs folder or `sizes.db` is safe; they're recreated as needed.
+
+## License
+
+MIT, see [LICENSE](LICENSE).

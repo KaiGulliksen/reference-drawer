@@ -165,7 +165,7 @@
   const viewerImages = $derived(viewerList ?? filtered);
 
   $effect(() => {
-    const parts = [activeBoard?.name, active?.name, "Reference Library"].filter(Boolean);
+    const parts = [activeBoard?.name, active?.name, "Reference Drawer"].filter(Boolean);
     getCurrentWindow().setTitle(parts.join(" – "));
   });
 
@@ -337,7 +337,7 @@
 
   async function removeWorkspace(workspace: Workspace) {
     const confirmed = await ask(
-      `Remove “${workspace.name}” from Reference Library?\n\nIts tags and boards are removed too. The folder and its images are not touched.`,
+      `Remove “${workspace.name}” from Reference Drawer?\n\nIts tags and boards are removed too. The folder and its images are not touched.`,
       { title: "Remove workspace", kind: "warning", okLabel: "Remove", cancelLabel: "Cancel" },
     );
     if (!confirmed) return;
@@ -1292,7 +1292,7 @@
           {#if !ready}
             <!-- starting up -->
           {:else if !active}
-            <h1>Reference Library</h1>
+            <h1>Reference Drawer</h1>
             <p>Make a workspace for each collection of references, like <em>Art inspiration</em> or <em>Home interiors</em>.</p>
             <p>Each workspace shows the images from its own folder.</p>
             <button class="primary big" onclick={addWorkspaceFromDialog}>Add a workspace…</button>

@@ -1,4 +1,4 @@
-# Builds Reference Library for Windows, macOS and Linux on GitHub's computers.
+# Builds Reference Drawer for Windows, macOS and Linux on GitHub's computers.
 #
 # It only runs when started by hand (GitHub → Actions → "Build for all platforms" → Run workflow),
 # so it never uses build minutes on its own. The finished installers can be downloaded from the
@@ -63,7 +63,7 @@ jobs:
       - name: Upload the installers
         uses: actions/upload-artifact@v4
         with:
-          name: Reference Library (${{ matrix.name }})
+          name: Reference Drawer (${{ matrix.name }})
           path: |
             src-tauri/target/release/bundle/**/*.exe
             src-tauri/target/release/bundle/**/*.dmg

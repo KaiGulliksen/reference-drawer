@@ -200,7 +200,7 @@ impl Library {
         // Saved by a newer version of the app: this one doesn't know what the newer steps did, so
         // leave it alone rather than risk damaging it.
         if applied > MIGRATIONS.len() as i64 {
-            return Err("The library was last used by a newer version of Reference Library. Please install the latest version.".into());
+            return Err("The library was last used by a newer version of Reference Drawer. Please install the latest version.".into());
         }
         // A library that's about to be upgraded gets a safety copy first. Without one the upgrade
         // doesn't go ahead: nothing has changed at that point, so nothing is lost by stopping.
