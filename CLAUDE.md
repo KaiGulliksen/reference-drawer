@@ -2,8 +2,9 @@
 
 A lightweight desktop app for collecting, browsing, tagging and arranging reference images
 (art inspiration, interiors, …). Tauri 2 (Rust backend in `src-tauri/`) + Svelte 5 / SvelteKit as a
-single-page app (interface in `src/`). README.md has the features, how to use them, and the full
-file layout.
+single-page app (interface in `src/`). README.md is the public front page of the GitHub repo (what
+the app is, screenshots, download); `docs/USER_GUIDE.md` has how to use every feature, and
+`docs/DEVELOPMENT.md` how to build it and the full file layout.
 
 The app used to be called Reference Library. Only the name people see changed: don't rename the
 `identifier` in `tauri.conf.json` (it decides where `library.db` and the settings are, so installed
@@ -255,7 +256,9 @@ tests.
 
 - Each feature becomes a minor version. Bump `package.json`, `src-tauri/Cargo.toml` and
   `src-tauri/tauri.conf.json` together, then `npm install --package-lock-only` to update the lock file.
-- Update README.md (how to use it, file layout) and this file when something they describe changes.
+- Update `docs/USER_GUIDE.md` (how to use it), `docs/DEVELOPMENT.md` (file layout), this file, and
+  README.md's feature list or `docs/screenshots/` when something they describe changes. Screenshots
+  are public: hide the folder path in the toolbar, which shows the Windows user name.
 - The owner approves every commit and push to GitHub (`KaiGulliksen/reference-library`, private,
   branch `main`). Commit messages: a short summary line with the version, then a plain-language
   list of what changed.

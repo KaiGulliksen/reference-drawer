@@ -1,205 +1,77 @@
+<div align="center">
+
+<img src="src-tauri/icons/128x128@2x.png" width="112" alt="Reference Drawer icon">
+
 # Reference Drawer
 
-A lightweight desktop app for browsing folders of art reference images.
-Built with [Tauri 2](https://tauri.app) (Rust backend + the WebView2 browser engine that ships with Windows)
-and [Svelte 5](https://svelte.dev) for the interface.
+**A lightweight desktop app for collecting, tagging and arranging reference images.**
 
-## Using it
+[Download](https://github.com/KaiGulliksen/reference-library/releases/latest) ·
+[How to use it](docs/USER_GUIDE.md) ·
+[Build it yourself](docs/DEVELOPMENT.md)
 
-Shortcuts are written for Windows and Linux; on a Mac use **⌘ (Cmd)** wherever it says Ctrl,
-and the app says *Finder* where it says *Explorer* here.
+</div>
 
-- **Workspaces** keep separate collections apart, e.g. *Art inspiration* and *Home interiors*.
-  Each one shows the images from its own folder. Add one with **+** in the sidebar (on Windows you
-  can also drag a folder onto the window), switch with a click or **Ctrl+1…9**, and hide the sidebar
-  with **Ctrl+B**.
-  - Double-click a workspace to rename it; right-click (or **⋯**) to rename, change its folder,
-    show it in Explorer or remove it. Removing a workspace never touches the folder or its images.
-  - Each workspace remembers its own *Subfolders* setting, and where you were scrolled to.
-- **Click** a thumbnail to select it, **double-click** or press **Enter** to view it full size.
-  Right-click an image for more options.
-- **Select several images** like in Explorer: Ctrl+click to add or remove one, Shift+click (or
-  Shift+arrow keys) for a range, **Ctrl+A** for all, **Esc** to clear.
-- In the grid: arrow keys move the selection, Page Up/Down and Home/End jump.
-- **Tags:** press **T** (or right-click → *Tags…*) to tag the selected images, or the image open in
-  the viewer. Type a tag and press Enter; existing tags are suggested as you type (Tab completes).
-  With several images selected, tags only some of them have are shown with a count; click one to
-  add it to all. Enter on an empty box or Esc closes the editor. The shortcut can be changed in
-  **Settings** (the gear button).
-  - The sidebar lists the tags used in the workspace. Click one to show only those images,
-    Ctrl+click to combine tags (images must have all of them), or pick *Untagged*.
-    The search box narrows the list; Enter shows the best match.
-  - Double-click a tag to rename it (renaming onto an existing name merges the two), or
-    right-click it to delete it. Tags belong to their workspace.
-- **Colors:** right-click a workspace, board or tag (or use **⋯** on a workspace) and click one of
-  the color dots to give it that color; the crossed-out dot removes it. Workspaces and boards get a
-  colored icon in the sidebar; a tag's color shows on its **#** in the sidebar, its chips on
-  thumbnails, in the tag editor and filter bar, and as a dot in the viewer. With tags hidden on
-  thumbnails, the small "has tags" dot takes the color of the image's first colored tag.
-  In the menu, ↑/↓ reach the row of colors and ←/→ move along it.
-- In the viewer:
-  - scroll to zoom (towards the cursor) · drag to pan · double-click to toggle fit / actual size
-  - ← / → (or A / D) previous / next · F or 0 fit · 1 actual size · + / − zoom
-  - **Esc** or the **mouse back button** closes it (the back button also closes menus, the tag
-    editor and Settings, one at a time)
-- **Drag images in** from a web browser, another app or Explorer, and they're saved as new files
-  in the open workspace's folder (at the top level, not in a subfolder).
-  - Drop onto another workspace in the sidebar to save there instead, or onto a board (in the
-    sidebar, or the open board itself, where it lands where you let go) to put it on the board too.
-  - The file keeps the image's own name; if that name is taken, " (2)" is added. Nothing is ever
-    replaced, and an image that's already in the workspace isn't saved twice.
-  - When the browser only hands over the image's web address, the app downloads it. Some
-    websites don't allow that; then save the image from the browser and drag the file in.
-  - While a tag filter is on, new images get those tags, so they stay in view.
-- **Move images to another workspace:** right-click → *Move to workspace…*, or drag selected tiles
-  onto another workspace in the sidebar. The files really move, into the top level of that
-  workspace's folder.
-  - Their tags go with them (a tag the other workspace doesn't have yet is created there).
-  - A name that's taken in the other folder gets " (2)" added; nothing is ever replaced.
-  - Boards belong to their workspace, so a moved image leaves the old workspace's boards. The app
-    asks first when that would happen.
-- **The open workspace updates by itself:** images added, removed or renamed in its folder (in
-  Explorer, by a browser's downloads, …) show up within a second. *Refresh* (or **F5** / **Ctrl+R**)
-  is still there for network drives, where the system may not report changes.
-- **Subfolders** includes images in folders inside the workspace's folder.
-- **Mood boards** gather the references for one piece in a single place (in the sidebar, under the
-  workspaces; each board belongs to its workspace).
-  - Add images: right-click → *Add to board…*, drag selected tiles onto a board in the sidebar, or
-    *Add to board* in the full-size viewer. Boards point at your images; nothing is copied.
-  - On the board: drag empty space (or with the middle button) to move around, scroll to zoom,
-    drag images to move them, drag the corner handles to resize, Shift+drag to select with a box.
-    **Arrange** tidies the selection (or everything) into rows; **Fit** (or F) shows everything.
-  - **Undo** and **Redo** (toolbar, or **Ctrl+Z** and **Ctrl+Y** / **Ctrl+Shift+Z**) cover everything done
-    to the board's items since you opened it: moving, resizing, cropping, stacking, Arrange, notes,
-    adding and removing.
-  - Double-click an image to view it full size, empty space to add a note, a note to edit it.
-    Notes are saved as you type.
-  - Right-click an image to **crop** it (only what's shown on the board changes, never the file),
-    bring it to the front, send it to the back, or remove it from the board (Delete). Removing never
-    touches the file. Stacking only changes when you ask: clicking or moving an image leaves it
-    where it is in the stack.
-  - A board shows its images whether or not *Subfolders* is ticked. "Image not found" means the file
-    really is gone.
-  - *← Images*, clicking the workspace, or the mouse back button returns to the grid.
-- **Layout** (toolbar): *Masonry* shows tiles shaped like their images, in columns; *Grid* shows
-  square tiles in rows, where **Fill / Whole** switches between cropped and whole images.
-- **Settings** (the gear button at the top left, next to the sidebar button) has switches for showing tags and file names on thumbnails.
-  Tags are shown and names hidden by default; the focused image's name is always in the status bar.
-  Its **About** tab says who made the app and under which license.
+![The Reference Drawer window: a sidebar of workspaces, boards and tags next to a masonry grid of images](docs/screenshots/main.jpg)
 
-Workspaces and tags are stored in an SQLite database, `library.db`, in the app's data folder:
-`%APPDATA%\com.kaigulliksen.reflibrary` on Windows, `~/Library/Application Support/com.kaigulliksen.reflibrary`
-on macOS, `~/.local/share/com.kaigulliksen.reflibrary` on Linux. **Tags stay with their images:**
-- Rename an image, or move it to another place inside the workspace's folder (in Explorer, Finder
-  or any other app), and its tags follow it when the folder is next scanned (straight away for
-  the open workspace, otherwise when you open it). The status bar says how many were kept.
-- Editing an image in place keeps its tags too.
-- A *copy* of a tagged image starts untagged, and a deleted image's tags are kept in case the file comes back.
-- Moving the whole folder works too (use *Change folder…*).
+Point Reference Drawer at the folders where you keep art inspiration, interiors or anything else
+you collect, and browse them as a fast, scrollable wall of images. Your images stay ordinary files
+in the folders you already have. There's no account and no cloud, and big folders stay smooth.
 
-**Backups:** `library.db` is copied into a `backups` folder next to it once a day (when the app starts; the
-last 7 days are kept) and right before a new version upgrades it (those are kept for good).
-**Settings → Show folder** opens it. To go back to a copy: close the app, delete `library.db`,
-`library.db-wal` and `library.db-shm`, then copy the backup you want next to where they were and name it `library.db`.
+## What it does
 
-How it works: each tagged image gets a "fingerprint" of its contents (its size plus its first and last
-16 KB). When a tagged file disappears and an untagged file with the same fingerprint turns up,
-it's the same image under a new name. Only files of exactly the same size are ever compared, so this
-stays fast. A file that's both renamed *and* edited before the next scan can't be recognised.
+- **Workspaces** keep separate collections apart. Each one is a folder on your computer.
+- **Tags** find things again: tag several images at once, then combine tags to narrow them down.
+- **Mood boards** gather the references for one piece on a free canvas, with notes and cropping.
+- **Drag images in** from a web browser or another app, and they're saved into the workspace.
+- **A full-size viewer** with zoom and pan, and arrow keys to step through a folder.
+- **The open folder updates by itself** when images are added, removed or renamed.
+- **Tags follow your files**, even when you rename or move them in Explorer or Finder.
+- **Keyboard shortcuts** for nearly everything, and the mouse back button closes whatever is on top.
 
-Supported formats: JPG, PNG, WebP, GIF, BMP, AVIF.
+Reads JPG, PNG, WebP, GIF, BMP and AVIF. The [user guide](docs/USER_GUIDE.md) explains every feature.
 
-## Platforms
+### Tag several images at once
 
-Windows is the main platform, but the app is written to work on **macOS** and **Linux** too:
-shortcuts use Cmd on a Mac, the library database is the same on every system, and file names
-follow each system's rules about capital letters.
+![The tag editor open over three selected images, with existing tags suggested](docs/screenshots/tags.jpg)
 
-To build for all three, open the repository on GitHub → **Actions** → **Build for all platforms** →
-**Run workflow**. When it finishes, the installers (Windows `.exe`, macOS `.dmg`, Linux `.deb` /
-`.rpm` / `.AppImage`) can be downloaded from the run's page. It uses GitHub Actions minutes, and only
-runs when started by hand. The macOS build isn't signed, so the first time you open it, right-click
-the app → Open.
+### Plan a piece on a mood board
 
-## Running and building
+![A mood board of retro computers and pipework with a short note](docs/screenshots/board.jpg)
 
-You need [Node.js](https://nodejs.org) and [Rust](https://rustup.rs), plus the
-[system requirements for Tauri](https://tauri.app/start/prerequisites/): the Microsoft C++ Build Tools
-on Windows, Xcode Command Line Tools on macOS, or WebKitGTK development packages on Linux.
+## Download
 
-```bash
-npm install          # first time only
-npm run tauri dev    # run the app with live reloading while you edit
-npm run tauri build  # make the optimised app + installer
-```
+Get the installer from the [latest release](https://github.com/KaiGulliksen/reference-library/releases/latest)
+(about 4 MB) and run it.
 
-`tauri build` produces:
-- `src-tauri/target/release/reference-library.exe`, the app itself, which runs on its own
-- `src-tauri/target/release/bundle/nsis/…-setup.exe`, an installer that adds a Start-menu entry
+The installer isn't code-signed, so Windows may show a "Windows protected your PC" warning the first
+time. Choose **More info**, then **Run anyway**.
 
-## How it's put together
+| System | Status |
+| --- | --- |
+| Windows 10 or 11, 64-bit | Supported, and what the app is developed and tested on |
+| macOS 12 or later | Written to work, but not tested yet |
+| Linux | Written to work, but not tested yet |
 
-```
-src/                      the interface (Svelte)
-  routes/+page.svelte     main window: switching workspaces, toolbar, empty states, menus
-  lib/Sidebar.svelte      the workspace list and the tag list with search
-  lib/TagEditor.svelte    adding/removing tags on the selected images
-  lib/SettingsDialog.svelte  settings (thumbnails, the tag shortcut, the backups folder) and the About page
-  lib/Board.svelte        a mood board: the free canvas, notes and cropping
-  lib/board.ts            board geometry: placing new images, Arrange, Fit
-  lib/drop.ts             reading images and folders dragged onto the window from other apps
-  lib/boards.svelte.ts    the open workspace's boards, kept in sync with the database
-  lib/ContextMenu.svelte  right-click menus (items defined in lib/menu.ts), including the color row
-  lib/colors.ts           the colors workspaces, boards and tags can have, and how each looks
-  lib/tags.svelte.ts      the open workspace's tags, kept in sync with the database
-  lib/platform.ts         differences between Windows, macOS and Linux (shortcuts, names, paths)
-  lib/Grid.svelte         virtualized thumbnail grid (only on-screen tiles exist)
-  lib/layout.ts           where each tile goes, for the grid and masonry layouts
-  lib/Viewer.svelte       full-size viewer with zoom/pan
-  lib/api.ts              calls into the Rust side, builds image URLs
-  lib/workspaces.svelte.ts  the workspace list, kept in sync with the database
-  lib/settings.svelte.ts  remembered preferences
-src-tauri/                the backend (Rust)
-  src/lib.rs              app setup, commands, the thumb:// protocol
-  src/backup.rs           safety copies of the library database (daily, and before upgrades)
-  src/boards.rs           mood boards and what's on them, with tests
-  src/library.rs          the library database (workspaces, tags, their colors), with its tests;
-                          `reconcile` keeps tags with renamed and moved images
-  src/identity.rs         fingerprints of image contents (to recognise renamed files)
-  src/import.rs           saves images dragged in from other apps (and downloads web addresses)
-  src/moving.rs           moves image files to another workspace's folder (never replacing anything)
-  src/watch.rs            watches the open workspace's folder, so changes show up by themselves
-  src/parallel.rs         spreads file work over several threads
-  src/scan.rs             finds image files in a folder
-  src/sizes.rs            remembers each image's pixel size (for masonry) in a cache
-  src/platform.rs         differences between Windows, macOS and Linux (e.g. where dropped folders are)
-  src/thumbs.rs           makes thumbnails and viewer previews, keeps the on-disk cache
-  src/pool.rs             background workers (newest request first)
-  tauri.conf.json         window and app settings
-  capabilities/           what the interface is allowed to ask the system for
-```
+For macOS or Linux, you can [build it yourself](docs/DEVELOPMENT.md) for now.
 
-**Why it stays light**
+## Your files are safe
 
-- **Thumbnails, not originals, in the grid.** Each image is shrunk to 400 px once and cached in
-  the app's cache folder (`%LOCALAPPDATA%\com.kaigulliksen.reflibrary\thumbs` on Windows; about 15 KB each). JPEGs are decoded directly
-  at reduced size, which is much faster than decoding the full image.
-- **Virtualized grid.** Only visible tiles exist, so big folders cost about the same as small ones.
-- **Images go straight from disk to the webview** via custom URLs (`thumb://` for thumbnails,
-  the asset protocol for originals) instead of being copied through JavaScript.
-- **Screen-sized previews in the viewer.** A fitted 6000×4000 photo is shown from a preview the size
-  of your screen (~10 MB of memory instead of ~100 MB). The original only loads when you zoom in
-  past the preview's detail, and is released again when you zoom back out.
-- **Thumbnails pause while you scroll fast**, so tiles that only flash past aren't generated.
+Reference Drawer never renames, edits, replaces or deletes your images or folders. Removing a
+workspace, tag or board only changes the app's own list. It changes your folders in just two
+ways, both when you ask it to:
 
-- **The folder is watched, not polled.** The system reports changes to the open workspace's folder,
-  so watching costs nothing while it stays the same, and a burst of changes means one rescan.
+- images you drag onto the window are saved as new files, never over an existing one;
+- *Move to workspace* moves images to another workspace's folder, again never replacing anything.
 
-- **Image sizes are read from file headers once**, then cached (`sizes.db` in the cache folder),
-  so the masonry layout costs almost nothing after the first scan of a folder.
-
-Deleting the thumbs folder or `sizes.db` is safe; they're recreated as needed.
+Your workspaces, tags and boards are stored on your computer and
+[backed up automatically](docs/USER_GUIDE.md#where-your-library-is-kept). The app doesn't send your
+images anywhere. The only thing it fetches from the internet is an image you dragged in from a
+website.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+[MIT](LICENSE), by [Kai Gulliksen](https://kaigulliksen.com).
+
+The images in the screenshots come from the author's personal reference collection and belong to
+their respective artists. If one of them is yours and you'd like it removed, please open an issue.
