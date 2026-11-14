@@ -9,8 +9,9 @@ the app is, screenshots, download); `docs/USER_GUIDE.md` has how to use every fe
 The app used to be called Reference Library. Only the name people see changed: don't rename the
 `identifier` in `tauri.conf.json` (it decides where `library.db` and the settings are, so installed
 copies would look empty) or `STORAGE_KEY` in `settings.svelte.ts` (settings would reset). The
-project folder, GitHub repo, package and program names (`reference-library`) and
-`REFERENCE_LIBRARY_DATA_DIR` keep the old name too.
+project folder, package and program names (`reference-library`) and
+`REFERENCE_LIBRARY_DATA_DIR` keep the old name too. The GitHub repo was renamed to
+`reference-drawer` (GitHub forwards the old address).
 
 The owner has basic coding skills but a good grasp of concepts: explain changes and decisions in
 plain language, say what was tested and how, and keep code commented the way it is now (comments
@@ -268,6 +269,12 @@ tests.
 - Update `docs/USER_GUIDE.md` (how to use it), `docs/DEVELOPMENT.md` (file layout), this file, and
   README.md's feature list or `docs/screenshots/` when something they describe changes. Screenshots
   are public: hide the folder path in the toolbar, which shows the Windows user name.
-- The owner approves every commit and push to GitHub (`KaiGulliksen/reference-library`, private,
-  branch `main`). Commit messages: a short summary line with the version, then a plain-language
+- The owner approves every commit and push to GitHub (`KaiGulliksen/reference-drawer`, branch
+  `main`). Commit messages: a short summary line with the version, then a plain-language
   list of what changed.
+- The README's Download links point at the newest GitHub release, so a version only reaches
+  people once it has one: after the commit is pushed, tag it `v<version>` and publish a release
+  with the installer from `src-tauri/target/release/bundle/nsis/` attached
+  (`gh release create v<version> "<installer>" --title "Reference Drawer <version>"`), with a
+  short plain-language list of what changed. Build the installer from the tagged commit. The
+  owner approves each release, like commits.

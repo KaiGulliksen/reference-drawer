@@ -1,7 +1,7 @@
 {
   "name": "reference-library",
   "version": "0.14.0",
-  "description": "",
+  "description": "A lightweight desktop app for collecting, tagging and arranging reference images",
   "type": "module",
   "scripts": {
     "dev": "vite dev",

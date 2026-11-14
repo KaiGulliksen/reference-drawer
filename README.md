@@ -6,7 +6,7 @@
 
 **A lightweight desktop app for collecting, tagging and arranging reference images.**
 
-[Download](https://github.com/KaiGulliksen/reference-library/releases/latest) ·
+[Download](https://github.com/KaiGulliksen/reference-drawer/releases/latest) ·
 [How to use it](docs/USER_GUIDE.md) ·
 [Build it yourself](docs/DEVELOPMENT.md)
 
@@ -41,7 +41,7 @@ Reads JPG, PNG, WebP, GIF, BMP and AVIF. The [user guide](docs/USER_GUIDE.md) ex
 
 ## Download
 
-Get the installer from the [latest release](https://github.com/KaiGulliksen/reference-library/releases/latest)
+Get the installer from the [latest release](https://github.com/KaiGulliksen/reference-drawer/releases/latest)
 (about 4 MB) and run it.
 
 The installer isn't code-signed, so Windows may show a "Windows protected your PC" warning the first
