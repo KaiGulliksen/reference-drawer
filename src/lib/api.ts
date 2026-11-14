@@ -103,13 +103,21 @@ export function fullUrl(image: ImageEntry): string {
   return convertFileSrc(image.path);
 }
 
-/** Preview sizes the Rust side can make (longest side, in pixels). Must match `PREVIEW_SIZES` in thumbs.rs. */
-const PREVIEW_SIZES = [1920, 2560, 3840];
+// Preview sizes the Rust side can make (longest side, in pixels). Together these must match
+// `PREVIEW_SIZES` in thumbs.rs.
+
+/**
+ * A preview between a thumbnail and a screen-sized one, for images shown at a medium size (on
+ * boards): several times smaller to load and keep in memory than a screen-sized preview.
+ */
+export const MEDIUM_PREVIEW_SIZE = 1024;
+
+const SCREEN_PREVIEW_SIZES = [1920, 2560, 3840];
 
 /** The smallest preview size that still covers the whole screen at full sharpness. */
 export function previewSizeForScreen(): number {
   const screenPixels = Math.max(screen.width, screen.height) * (window.devicePixelRatio || 1);
-  return PREVIEW_SIZES.find((size) => size >= screenPixels) ?? PREVIEW_SIZES[PREVIEW_SIZES.length - 1];
+  return SCREEN_PREVIEW_SIZES.find((size) => size >= screenPixels) ?? SCREEN_PREVIEW_SIZES[SCREEN_PREVIEW_SIZES.length - 1];
 }
 
 /**

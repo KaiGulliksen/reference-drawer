@@ -56,7 +56,11 @@ export function computeLayout(images: ImageEntry[], width: number, tileSize: num
     }
     const x = PADDING + col * (cell + GAP);
     const y = bottoms[col];
-    rects.set([x, y, cell, tileHeight], i * 4);
+    // Written one by one: a small list per tile would be thrown away again 20,000 times over.
+    rects[i * 4] = x;
+    rects[i * 4 + 1] = y;
+    rects[i * 4 + 2] = cell;
+    rects[i * 4 + 3] = tileHeight;
     column[i] = col;
     rowInColumn[i] = byColumn[col].length;
     byColumn[col].push(i);

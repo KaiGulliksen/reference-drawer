@@ -50,8 +50,9 @@ explain *why*, in plain English, at the level of the surrounding code).
 - **Getting images on screen**, from cheapest to most expensive:
   - grid thumbnails: `thumb://…?s=400` (`thumbs.rs`), made once and cached on disk, generated on a
     newest-first worker pool (`pool.rs`) so on-screen tiles go first;
-  - viewer/board previews: `thumb://…?s=1920|2560|3840` (screen-sized; small images and GIFs are
-    served as the original);
+  - previews: `thumb://…?s=1024` (boards, for images shown at a medium size) and
+    `thumb://…?s=1920|2560|3840` (screen-sized, viewer and boards); small images and GIFs are
+    served as the original;
   - originals: Tauri's asset protocol (`convertFileSrc`), only when zoomed in past the preview's detail.
   Build URLs with the helpers in `src/lib/api.ts`, never by hand.
 - **Data lives in three places:**
@@ -85,6 +86,11 @@ explain *why*, in plain English, at the level of the surrounding code).
   keyed by `pathKey`.
 - Never put originals in the grid. In the viewer and on boards, pick the smallest source that's sharp
   enough and drop the bigger one again when it's no longer needed.
+- While the window is minimised the web view is told to give memory back
+  (`save_memory_while_minimized` in `platform.rs`, Windows only: about 190 MB → 40 MB). Only when
+  minimised, never when it merely loses focus: the app is looked at while working in other apps.
+- Decodes needing more than `BIG_DECODE_BYTES` (thumbs.rs) run one at a time, so several huge
+  images can't add up to gigabytes for a moment.
 - Reading many files (headers, fingerprints) goes through `parallel::map`; don't hold the database
   lock while reading files (see `reconcile`: read, compute without the lock, then write).
 - Prefer a few kilobytes of extra code over a new dependency; check bundle and memory impact before
@@ -228,6 +234,9 @@ tests.
 - CDP input coordinates are CSS pixels; screenshots are device pixels (×1.25 on this machine).
   Measure positions with `getBoundingClientRect()`, not from screenshots.
 - A synthetic Enter must include `text: "\r"`, or focused buttons won't activate.
+- To minimise and restore the window from a script (user32 `ShowWindowAsync`), look up the
+  process's `MainWindowHandle` once while the window is showing and reuse it: while minimised,
+  Windows reports a different, hidden window as the main one, so a "restore" misses.
 - The app's native confirm dialogs can be answered with PowerShell `WScript.Shell`
   (`AppActivate("<dialog title>")` + `SendKeys`). A real mouse back button can be sent with
   user32 `mouse_event` (XBUTTON1).

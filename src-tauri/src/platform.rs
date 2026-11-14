@@ -67,3 +67,48 @@ pub fn watch_dropped_paths(window: &tauri::WebviewWindow) -> tauri::Result<()> {
 pub fn watch_dropped_paths(_window: &tauri::WebviewWindow) -> tauri::Result<()> {
     Ok(())
 }
+
+/// Windows only: while the window is minimised, asks the web view to let go of the memory it
+/// isn't using, and to take it back when the window returns.
+///
+/// Nearly all of the app's memory is the web view's (decoded thumbnails, the graphics cache), and
+/// a reference app spends a lot of its time minimised next to a drawing program. WebView2 has a
+/// setting made for exactly this ("memory usage target level"); the cost is a brief moment of
+/// catching up when the window comes back. Only when minimised, never just because another
+/// window has the focus: the app is often looked at while working in something else.
+/// WebKit (macOS and Linux) has no such setting, and manages this by itself.
+#[cfg(windows)]
+pub fn save_memory_while_minimized(window: &tauri::WebviewWindow) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL, ICoreWebView2_19,
+    };
+    use windows_core::Interface;
+
+    let target = window.clone();
+    let was_minimized = AtomicBool::new(false);
+    window.on_window_event(move |event| {
+        // Minimising and restoring both arrive as a change of size.
+        if !matches!(event, tauri::WindowEvent::Resized(_)) {
+            return;
+        }
+        let minimized = target.is_minimized().unwrap_or(false);
+        if was_minimized.swap(minimized, Ordering::Relaxed) == minimized {
+            return; // an ordinary resize
+        }
+        let _ = target.with_webview(move |webview| unsafe {
+            let level = if minimized {
+                COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW
+            } else {
+                COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL
+            };
+            // Older WebView2 versions don't have the setting; then nothing changes.
+            if let Ok(core) = webview.controller().CoreWebView2().and_then(|core| core.cast::<ICoreWebView2_19>()) {
+                let _ = core.SetMemoryUsageTargetLevel(level);
+            }
+        });
+    });
+}
+
+#[cfg(not(windows))]
+pub fn save_memory_while_minimized(_window: &tauri::WebviewWindow) {}

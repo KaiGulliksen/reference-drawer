@@ -84,7 +84,14 @@ src-tauri/                the backend (Rust)
 - **Screen-sized previews in the viewer.** A fitted 6000×4000 photo is shown from a preview the size
   of your screen (~10 MB of memory instead of ~100 MB). The original only loads when you zoom in
   past the preview's detail, and is released again when you zoom back out.
+- **Boards load only as much detail as they show.** An image on a board steps from the thumbnail
+  to a 1024 px preview, then the screen-sized one, then the original, as you zoom in on it.
 - **Thumbnails pause while you scroll fast**, so tiles that only flash past aren't generated.
+- **Memory is handed back while the window is minimised** (Windows): the web view is asked to let
+  go of what it isn't using (`save_memory_while_minimized` in `platform.rs`), which takes the app
+  from around 190 MB to around 40 MB after a minute, and it takes it back when the window returns.
+- **Huge images are decoded one at a time** (`BIG_DECODE_BYTES` in `thumbs.rs`), so a handful of
+  very large PNGs can't each take a hundred megabytes at the same moment.
 
 - **The folder is watched, not polled.** The system reports changes to the open workspace's folder,
   so watching costs nothing while it stays the same, and a burst of changes means one rescan.

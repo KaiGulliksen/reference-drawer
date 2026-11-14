@@ -530,6 +530,7 @@ fn start_up(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     });
     if let Some(window) = app.get_webview_window("main") {
         platform::watch_dropped_paths(&window)?;
+        platform::save_memory_while_minimized(&window);
     }
     Ok(())
 }

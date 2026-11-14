@@ -154,7 +154,7 @@
 
     <div class="about" class:hidden={page !== "about"}>
       <p class="name">Reference Drawer</p>
-      <p>An open source project. The source code isn't public yet, but it will be.</p>
+      <p>An open source project.</p>
       <p>Released under the MIT License by Kai Gulliksen.</p>
       <!-- A button rather than a link: a real link would load the site inside the app's window. -->
       <p><button class="link" onclick={openWebsite} title="Open in your web browser">kaigulliksen.com</button></p>

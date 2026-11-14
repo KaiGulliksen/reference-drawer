@@ -57,6 +57,8 @@ export const RESERVED_KEYS: Record<string, string> = {
   end: "going to the last image",
   enter: "opening images",
   escape: "closing things",
+  delete: "taking things off a board",
+  backspace: "taking things off a board",
   tab: "moving between controls",
   " ": "scrolling",
   a: "previous image in the viewer",

@@ -80,6 +80,8 @@ and the app says *Finder* where it says *Explorer* here.
 - **Settings** (the gear button at the top left, next to the sidebar button) has switches for showing tags and file names on thumbnails.
   Tags are shown and names hidden by default; the focused image's name is always in the status bar.
   Its **About** tab says who made the app and under which license.
+- **Minimised**, the app hands most of its memory back to the system after about a minute
+  (on Windows), and picks it up again when you bring the window back.
 
 ## Where your library is kept
 

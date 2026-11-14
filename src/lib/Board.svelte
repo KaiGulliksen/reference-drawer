@@ -9,8 +9,8 @@
   Ctrl+A (⌘A) selects all, Ctrl+Z / Ctrl+Y (⌘Z / ⌘Y, or with Shift) undo and redo, Esc clears the
   selection.
 
-  Images load at the resolution they're shown at: thumbnails when small, then a screen-sized
-  preview, and the original only for images on screen and zoomed in close.
+  Images load at the resolution they're shown at: thumbnails when small, then a medium preview,
+  then a screen-sized one, and the original only for images on screen and zoomed in close.
 -->
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
@@ -20,6 +20,7 @@
     boardFiles,
     fullUrl,
     getBoard,
+    MEDIUM_PREVIEW_SIZE,
     previewSizeForScreen,
     previewUrl,
     removeBoardItems,
@@ -301,6 +302,9 @@
     const shown = Math.max(item.width / crop.w, item.height / crop.h) * settledZoom * dpr;
     if (shown <= THUMB_SIZE * 1.1) return null;
     const entry = entryFor(item.path);
+    // Most images on a board are shown well below screen size: a medium preview is sharp enough
+    // and several times lighter than a screen-sized one.
+    if (shown <= MEDIUM_PREVIEW_SIZE * 1.1) return previewUrl(entry, MEDIUM_PREVIEW_SIZE);
     const longest = Math.max(entry.width, entry.height);
     if (shown <= previewSize * 1.1 || (longest > 0 && longest <= previewSize)) return previewUrl(entry, previewSize);
     return fullUrl(entry);

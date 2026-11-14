@@ -8,3 +8,8 @@ node_modules
 !.env.example
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Working files for the app icon (the finished icons are in src-tauri/icons)
+/RefDrawerIcon.png
+/picture.png
+/reficon.af
