@@ -69,6 +69,11 @@ Your workspaces, tags and boards are stored on your computer and
 images anywhere. The only thing it fetches from the internet is an image you dragged in from a
 website.
 
+## Support
+
+Reference Drawer is free. If it's useful to you and you'd like to support its development, you
+can [buy me a coffee on Ko-fi](https://ko-fi.com/kaigulliksen).
+
 ## License
 
 [MIT](LICENSE), by [Kai Gulliksen](https://kaigulliksen.com).
